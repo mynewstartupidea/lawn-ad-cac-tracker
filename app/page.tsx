@@ -106,17 +106,28 @@ function MetricCard({ label, value, sub, icon, accentColor, loading }: {
 }) {
   return (
     <div className="relative rounded-2xl border overflow-hidden p-5 flex flex-col gap-3"
-      style={{ background: "#111", borderColor: "rgba(255,255,255,0.06)" }}>
-      <div className="absolute top-0 left-0 right-0 h-[2px]" style={{ background: accentColor }} />
+      style={{ background: "#111", borderColor: loading ? accentColor + "30" : "rgba(255,255,255,0.06)", transition: "border-color 0.4s" }}>
+      {/* Accent top bar — sweeps while loading */}
+      <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden" style={{ background: accentColor + "40" }}>
+        <div style={{ position: "absolute", inset: 0, background: accentColor }} />
+        {loading && (
+          <div style={{
+            position: "absolute", top: 0, bottom: 0, width: "30%",
+            background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent)",
+            animation: "scan 1.4s ease-in-out infinite",
+          }} />
+        )}
+      </div>
       <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-        style={{ background: accentColor + "15" }}>{icon}</div>
+        style={{ background: accentColor + (loading ? "08" : "15"), transition: "background 0.3s" }}>{icon}</div>
       <div>
         <p className="text-[10px] font-semibold tracking-widest uppercase mb-1"
           style={{ color: "rgba(255,255,255,0.25)" }}>{label}</p>
         {loading
-          ? <div className="h-7 w-20 rounded-lg animate-pulse" style={{ background: "rgba(255,255,255,0.06)" }} />
+          ? <div className="skeleton h-7 w-20 rounded-lg" />
           : <p className="text-[26px] font-bold text-white leading-none tracking-tight">{value}</p>}
         {sub && !loading && <p className="text-[11px] mt-1.5" style={{ color: "rgba(255,255,255,0.2)" }}>{sub}</p>}
+        {loading && <div className="skeleton h-3 w-16 rounded mt-2" />}
       </div>
     </div>
   );
@@ -127,10 +138,10 @@ function MetricCard({ label, value, sub, icon, accentColor, loading }: {
 function FbPill({ label, value, loading }: { label: string; value: string; loading: boolean }) {
   return (
     <div className="flex flex-col gap-1 rounded-xl p-4 flex-1 min-w-[120px]"
-      style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.05)" }}>
+      style={{ background: "#161616", border: `1px solid ${loading ? "rgba(24,119,242,0.15)" : "rgba(255,255,255,0.05)"}`, transition: "border-color 0.3s" }}>
       <p className="text-[10px] font-semibold tracking-widest uppercase" style={{ color: "rgba(255,255,255,0.2)" }}>{label}</p>
       {loading
-        ? <div className="h-5 w-16 rounded animate-pulse" style={{ background: "rgba(255,255,255,0.06)" }} />
+        ? <div className="skeleton h-5 w-16 rounded" />
         : <p className="text-base font-bold text-white">{value}</p>}
     </div>
   );
@@ -151,7 +162,7 @@ function SkeletonRow({ cols }: { cols: number }) {
     <tr>
       {[...Array(cols)].map((_, i) => (
         <td key={i} className="px-5 py-4">
-          <div className="h-3.5 rounded animate-pulse" style={{ background: "rgba(255,255,255,0.05)", width: `${45 + (i * 17) % 45}%` }} />
+          <div className="skeleton h-3.5 rounded" style={{ width: `${45 + (i * 17) % 45}%` }} />
         </td>
       ))}
     </tr>
@@ -505,8 +516,17 @@ export default function Home() {
           </div>
 
           {/* Desktop table */}
-          <div className="hidden sm:block rounded-2xl overflow-hidden"
-            style={{ background: "#111", border: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="hidden sm:block rounded-2xl overflow-hidden relative"
+            style={{ background: "#111", border: `1px solid ${loadingData || syncingFb ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)"}`, transition: "border-color 0.4s" }}>
+            {(loadingData || syncingFb) && (
+              <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden z-10">
+                <div style={{
+                  position: "absolute", top: 0, bottom: 0, width: "35%",
+                  background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent)",
+                  animation: "scan 1.6s ease-in-out infinite",
+                }} />
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -562,11 +582,11 @@ export default function Home() {
           <div className="sm:hidden space-y-2">
             {loadingData
               ? [...Array(3)].map((_, i) => (
-                  <div key={i} className="rounded-2xl p-4 space-y-3 animate-pulse"
+                  <div key={i} className="rounded-2xl p-4 space-y-3"
                     style={{ background: "#111", border: "1px solid rgba(255,255,255,0.06)" }}>
-                    <div className="h-4 w-40 rounded" style={{ background: "rgba(255,255,255,0.06)" }} />
+                    <div className="skeleton h-4 w-40 rounded" />
                     <div className="grid grid-cols-4 gap-2">
-                      {[...Array(4)].map((_, j) => <div key={j} className="h-10 rounded-lg" style={{ background: "rgba(255,255,255,0.04)" }} />)}
+                      {[...Array(4)].map((_, j) => <div key={j} className="skeleton h-10 rounded-lg" />)}
                     </div>
                   </div>
                 ))
@@ -633,8 +653,17 @@ export default function Home() {
           </div>
 
           {/* Desktop table */}
-          <div className="hidden sm:block rounded-2xl overflow-hidden"
-            style={{ background: "#111", border: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="hidden sm:block rounded-2xl overflow-hidden relative"
+            style={{ background: "#111", border: `1px solid ${loadingData ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)"}`, transition: "border-color 0.4s" }}>
+            {loadingData && (
+              <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden z-10">
+                <div style={{
+                  position: "absolute", top: 0, bottom: 0, width: "35%",
+                  background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent)",
+                  animation: "scan 1.6s ease-in-out infinite",
+                }} />
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -700,13 +729,13 @@ export default function Home() {
           <div className="sm:hidden space-y-2">
             {loadingData
               ? [...Array(4)].map((_, i) => (
-                  <div key={i} className="rounded-2xl p-4 animate-pulse"
+                  <div key={i} className="rounded-2xl p-4"
                     style={{ background: "#111", border: "1px solid rgba(255,255,255,0.06)" }}>
                     <div className="flex justify-between mb-2">
-                      <div className="h-4 w-28 rounded" style={{ background: "rgba(255,255,255,0.06)" }} />
-                      <div className="h-5 w-14 rounded-full" style={{ background: "rgba(255,255,255,0.04)" }} />
+                      <div className="skeleton h-4 w-28 rounded" />
+                      <div className="skeleton h-5 w-14 rounded-full" />
                     </div>
-                    <div className="h-3 w-44 rounded mt-2" style={{ background: "rgba(255,255,255,0.04)" }} />
+                    <div className="skeleton h-3 w-44 rounded mt-2" />
                   </div>
                 ))
               : filteredLeads.length === 0
