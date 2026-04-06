@@ -1,6 +1,17 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../lib/supabase";
 
+interface FbInsight {
+  ad_name: string;
+  spend: string;
+}
+
+interface FbResponse {
+  data?: FbInsight[];
+  paging?: { next?: string };
+  error?: { message: string };
+}
+
 export async function GET(req: Request) {
   const accessToken = process.env.FACEBOOK_ACCESS_TOKEN;
   const adAccountId = process.env.FACEBOOK_AD_ACCOUNT_ID;
@@ -17,22 +28,22 @@ export async function GET(req: Request) {
 
   try {
     const fields = "ad_name,campaign_name,spend";
-    const allData: { ad_name: string; spend: string }[] = [];
-    let url: string | null =
+    const allData: FbInsight[] = [];
+    let nextUrl: string | null =
       `https://graph.facebook.com/v21.0/act_${adAccountId}/insights` +
       `?fields=${fields}&level=ad&date_preset=${datePreset}&access_token=${accessToken}`;
 
     // Paginate through all results
-    while (url) {
-      const response = await fetch(url);
-      const fbData = await response.json();
+    while (nextUrl) {
+      const res = await fetch(nextUrl);
+      const fbData: FbResponse = await res.json();
 
       if (fbData.error) {
         return NextResponse.json({ error: fbData.error.message }, { status: 400 });
       }
 
-      allData.push(...(fbData.data || []));
-      url = fbData.paging?.next ?? null;
+      allData.push(...(fbData.data ?? []));
+      nextUrl = fbData.paging?.next ?? null;
     }
 
     // Group by ad_name and sum spend
