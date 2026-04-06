@@ -265,8 +265,19 @@ export default function Home() {
 
   // ── When controls change ──────────────────────────────────────────────────
 
-  const handleDateRange = (r: DateRange) => { setDateRange(r); syncFacebook(r, account); };
-  const handleAccount   = (a: Account)   => { setAccount(a);   syncFacebook(dateRange, a); };
+  const clearFbData = useCallback(() => {
+    setFbMetrics(null);
+    setAdSpends(prev => {
+      const next: Record<string, { spend: number; source: string }> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (v.source !== "facebook") next[k] = v;
+      }
+      return next;
+    });
+  }, []);
+
+  const handleDateRange = (r: DateRange) => { setDateRange(r); clearFbData(); syncFacebook(r, account); };
+  const handleAccount   = (a: Account)   => { setAccount(a);   clearFbData(); syncFacebook(dateRange, a); };
 
   const refresh = useCallback(async () => {
     setLoadingData(true);
