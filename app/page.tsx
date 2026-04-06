@@ -269,7 +269,13 @@ export default function Home() {
       setLoadingData(true);
       await fetchSupabase();
       setLoadingData(false);
-      syncFacebook(dateRange, account);
+      await syncFacebook(dateRange, account);
+      // Warm server cache for the other two account options in the background
+      // so switching accounts returns instantly from cache
+      const others = (["all", "florida", "georgia"] as Account[]).filter(a => a !== account);
+      others.forEach(a => {
+        fetch(`/api/facebook-spend?date_preset=${FB_PRESET[dateRange]}&account=${ACCOUNT_IDS[a]}`).catch(() => {});
+      });
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
