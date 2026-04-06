@@ -59,7 +59,7 @@ const DATE_RANGE_LABELS: Record<DateRange, string> = {
 };
 
 const FB_PRESET: Record<DateRange, string> = {
-  "7d": "last_7_days", "14d": "last_14_days", "30d": "last_30_days", "all": "maximum",
+  "7d": "last_7d", "14d": "last_14d", "30d": "last_30_days", "all": "maximum",
 };
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
