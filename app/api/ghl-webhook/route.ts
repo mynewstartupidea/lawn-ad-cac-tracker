@@ -1,41 +1,53 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../lib/supabase";
 
-// Robustly extract ad_name from the many ways GHL can send it.
-// GHL sends custom fields differently depending on the workflow/version:
-//   - top-level: body.ad_name or body.adName
-//   - custom_fields array: [{ key: "ad_name", field_value: "..." }]
-//   - attribution: body.attributionSource.utmCampaign (Facebook UTM)
-function extractAdName(body: Record<string, unknown>): string {
-  // 1. Top-level direct fields
-  if (typeof body.ad_name === "string" && body.ad_name.trim()) return body.ad_name.trim();
-  if (typeof body.adName === "string" && body.adName.trim()) return body.adName.trim();
-  if (typeof body.campaign_name === "string" && body.campaign_name.trim()) return body.campaign_name.trim();
+// Checks whether a value is a real non-empty string.
+// Filters out:
+//   - empty / whitespace
+//   - unresolved GHL template variables like {{contact.ad_name}}
+function isReal(val: unknown): val is string {
+  if (typeof val !== "string") return false;
+  const t = val.trim();
+  if (!t) return false;
+  if (t.startsWith("{{") && t.endsWith("}}")) return false; // unresolved GHL variable
+  return true;
+}
 
-  // 2. custom_fields array: [{ key, field_value }] or [{ key, value }]
+// Extract ad name from the GHL webhook payload.
+// GHL can deliver it in several different places depending on the workflow setup.
+function extractAdName(body: Record<string, unknown>): string {
+  // 1. Top-level "ad_name" — exactly what the user's GHL webhook sends
+  if (isReal(body.ad_name)) return (body.ad_name as string).trim();
+  if (isReal(body.adName)) return (body.adName as string).trim();
+  if (isReal(body.campaign_name)) return (body.campaign_name as string).trim();
+
+  // 2. GHL attributionSource — automatically populated by GHL from UTM params
+  //    when a contact comes from a Facebook / Google ad click.
+  //    This is the most reliable fallback when the custom field is empty.
+  const attr = body.attributionSource as Record<string, unknown> | undefined;
+  if (attr) {
+    if (isReal(attr.utmCampaign)) return (attr.utmCampaign as string).trim();
+    if (isReal(attr.campaignName)) return (attr.campaignName as string).trim();
+    if (isReal(attr.utmContent)) return (attr.utmContent as string).trim();
+    if (isReal(attr.utmAdName)) return (attr.utmAdName as string).trim();
+  }
+
+  // 3. custom_fields array: [{ key: "ad_name", field_value: "..." }]
   if (Array.isArray(body.custom_fields)) {
-    for (const field of body.custom_fields as Record<string, unknown>[]) {
-      const key = String(field.key || field.name || "").toLowerCase();
-      if (key === "ad_name" || key === "adname" || key === "campaign_name" || key === "ad name") {
-        const val = field.field_value ?? field.value ?? field.fieldValue;
-        if (val && String(val).trim()) return String(val).trim();
+    for (const f of body.custom_fields as Record<string, unknown>[]) {
+      const key = String(f.key ?? f.name ?? "").toLowerCase().replace(/\s/g, "_");
+      if (["ad_name", "adname", "campaign_name", "ad_name_field"].includes(key)) {
+        const val = f.field_value ?? f.value ?? f.fieldValue;
+        if (isReal(val)) return String(val).trim();
       }
     }
   }
 
-  // 3. attributionSource from GHL's Facebook Lead Ad integration
-  const attr = body.attributionSource as Record<string, unknown> | undefined;
-  if (attr) {
-    if (typeof attr.utmCampaign === "string" && attr.utmCampaign.trim()) return attr.utmCampaign.trim();
-    if (typeof attr.campaignName === "string" && attr.campaignName.trim()) return attr.campaignName.trim();
-    if (typeof attr.utmContent === "string" && attr.utmContent.trim()) return attr.utmContent.trim();
-  }
-
   // 4. Any nested customData object
-  const customData = body.customData as Record<string, unknown> | undefined;
-  if (customData) {
-    const val = customData.ad_name ?? customData.adName ?? customData.campaign_name;
-    if (val && String(val).trim()) return String(val).trim();
+  const cd = body.customData as Record<string, unknown> | undefined;
+  if (cd) {
+    const val = cd.ad_name ?? cd.adName ?? cd.campaign_name;
+    if (isReal(val)) return String(val).trim();
   }
 
   return "Unknown Ad";
@@ -45,21 +57,23 @@ export async function POST(req: Request) {
   try {
     const body = await req.json() as Record<string, unknown>;
 
-    // Log the full payload in dev so you can see exactly what GHL sends.
-    // Check your server logs if ad_name is still showing as "Unknown Ad".
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[GHL webhook] Full payload:", JSON.stringify(body, null, 2));
-    }
-
-    const email = String(body.email || "").toLowerCase().trim();
-    const firstName = String(body.first_name || body.name || body.full_name || "Unknown").trim();
-    const phone = String(body.phone || "").trim();
+    // Always log key fields — check Vercel function logs if ad_name is wrong
+    const email = String(body.email ?? "").toLowerCase().trim();
+    const firstName = String(body.first_name ?? body.name ?? body.full_name ?? "Unknown").trim();
+    const phone = String(body.phone ?? "").trim();
     const adName = extractAdName(body);
 
-    console.log(`[GHL webhook] email=${email} ad_name=${adName}`);
+    // Log the raw ad_name value GHL sent so you can debug in Vercel logs
+    console.log("[GHL] received →", {
+      email,
+      firstName,
+      raw_ad_name: body.ad_name,       // what GHL actually sent
+      resolved_ad_name: adName,         // what we stored
+      attributionSource: body.attributionSource ?? null,
+    });
 
     if (!email || !email.includes("@")) {
-      return NextResponse.json({ success: false, error: "Valid email is required" }, { status: 400 });
+      return NextResponse.json({ success: false, error: "Valid email required" }, { status: 400 });
     }
 
     // Deduplicate by email
@@ -78,13 +92,13 @@ export async function POST(req: Request) {
     ]);
 
     if (error) {
-      console.error("[GHL webhook] insert error:", error);
+      console.error("[GHL] insert error:", error);
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, ad_name: adName });
   } catch (err) {
-    console.error("[GHL webhook] parse error:", err);
+    console.error("[GHL] parse error:", err);
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 }
