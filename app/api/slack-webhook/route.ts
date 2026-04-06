@@ -5,41 +5,58 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    console.log("Slack event:", body);
-
     if (body.type === "url_verification") {
       return NextResponse.json({ challenge: body.challenge });
     }
 
     const event = body.event;
 
-    if (!event || !event.text) {
-      return NextResponse.json({ ok: true });
-    }
+    if (event?.type === "message" && event?.text) {
+      const text = event.text.trim();
 
-    const text = event.text.trim();
+      if (text.toUpperCase().startsWith("SOLD:")) {
+        let email = text.replace(/SOLD:/i, "").trim();
 
-    if (text.toLowerCase().startsWith("sold:")) {
-      const email = text.replace(/^sold:/i, "").trim().toLowerCase();
+        // Clean Slack mailto format
+        if (email.includes("mailto:")) {
+          const parts = email.split("|");
+          if (parts[1]) {
+            email = parts[1].replace(">", "").trim();
+          }
+        }
 
-      const { error } = await supabase.from("sales").insert([
-        {
-          email,
-          status: "sold",
-        },
-      ]);
+        email = email.toLowerCase();
 
-      if (error) {
-        console.log("Supabase sales insert error:", error);
-        return NextResponse.json({ ok: false }, { status: 500 });
+        if (email) {
+          const { data: existingSale } = await supabase
+            .from("sales")
+            .select("id")
+            .eq("email", email)
+            .maybeSingle();
+
+          if (!existingSale) {
+            const { error } = await supabase.from("sales").insert([
+              {
+                email,
+                status: "sold",
+              },
+            ]);
+
+            if (error) {
+              console.error("Supabase insert error:", error);
+            } else {
+              console.log("Sale saved for:", email);
+            }
+          } else {
+            console.log("Sale already exists for:", email);
+          }
+        }
       }
-
-      console.log("Saved sold email:", email);
     }
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.log("Slack webhook error:", error);
-    return NextResponse.json({ ok: false }, { status: 400 });
+    console.error(error);
+    return NextResponse.json({ error: "failed" }, { status: 500 });
   }
 }
