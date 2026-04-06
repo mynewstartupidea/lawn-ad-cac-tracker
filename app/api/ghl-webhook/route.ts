@@ -21,16 +21,20 @@ function extractAdName(body: Record<string, unknown>): string {
   if (isReal(body.adName)) return (body.adName as string).trim();
   if (isReal(body.campaign_name)) return (body.campaign_name as string).trim();
 
-  // 2. GHL attributionSource — automatically populated by GHL from UTM params
-  //    when a contact comes from a Facebook / Google ad click.
-  //    This is the most reliable fallback when the custom field is empty.
+  // 2. GHL attributionSource — auto-populated from UTM params on the landing page URL.
+  //    The ad URL uses utm_content={{ad.name}}, so Facebook injects the real ad name
+  //    into utm_content on every click. Check utmContent FIRST.
   const attr = body.attributionSource as Record<string, unknown> | undefined;
   if (attr) {
-    if (isReal(attr.utmCampaign)) return (attr.utmCampaign as string).trim();
-    if (isReal(attr.campaignName)) return (attr.campaignName as string).trim();
-    if (isReal(attr.utmContent)) return (attr.utmContent as string).trim();
+    if (isReal(attr.utmContent)) return (attr.utmContent as string).trim();   // utm_content={{ad.name}} ← this one
     if (isReal(attr.utmAdName)) return (attr.utmAdName as string).trim();
+    if (isReal(attr.campaignName)) return (attr.campaignName as string).trim();
+    if (isReal(attr.utmCampaign)) return (attr.utmCampaign as string).trim();
   }
+
+  // 2b. Some GHL versions hoist UTM params to the top level
+  if (isReal(body.utm_content)) return (body.utm_content as string).trim();
+  if (isReal(body.utmContent)) return (body.utmContent as string).trim();
 
   // 3. custom_fields array: [{ key: "ad_name", field_value: "..." }]
   if (Array.isArray(body.custom_fields)) {
@@ -64,12 +68,13 @@ export async function POST(req: Request) {
     const adName = extractAdName(body);
 
     // Log the raw ad_name value GHL sent so you can debug in Vercel logs
+    const attr = body.attributionSource as Record<string, unknown> | undefined;
     console.log("[GHL] received →", {
       email,
-      firstName,
-      raw_ad_name: body.ad_name,       // what GHL actually sent
-      resolved_ad_name: adName,         // what we stored
-      attributionSource: body.attributionSource ?? null,
+      raw_ad_name: body.ad_name,             // from {{contact.ad_name}}
+      utm_content: attr?.utmContent ?? null, // from utm_content={{ad.name}} ← should be ad name
+      utm_campaign: attr?.utmCampaign ?? null,
+      resolved_ad_name: adName,              // final value stored in DB
     });
 
     if (!email || !email.includes("@")) {
