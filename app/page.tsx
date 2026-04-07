@@ -46,12 +46,30 @@ interface ChatMessage {
   ts: Date;
 }
 
+interface Campaign {
+  id: string;
+  name: string;
+  status: "ACTIVE" | "PAUSED" | "DELETED" | "ARCHIVED";
+  daily_budget?: string;
+  lifetime_budget?: string;
+  objective?: string;
+}
+
+interface Asset {
+  name: string;
+  url: string;
+  size: number;
+  type: string;
+  created_at?: string;
+}
+
 type LeadFilter = "all" | "open" | "sold";
 type DateRange  = "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
 type Account    = "all" | "florida" | "georgia";
 type Tab        = "cac" | "ads";
+type AdTab      = "chat" | "metrics" | "assets";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -277,12 +295,15 @@ export default function Home() {
   const [sortCol,    setSortCol]    = useState<SortCol>("leads");
   const [sortDir,    setSortDir]    = useState<SortDir>("desc");
 
+  // Ad Management inner tab
+  const [adTab, setAdTab] = useState<AdTab>("chat");
+
   // AI Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
       role: "assistant",
-      text: "Hi! I can help you manage your Facebook Ads campaigns. Try asking me to pause a campaign, adjust budgets, or launch a new ad.",
+      text: "Hi! I can help you manage your Facebook Ads campaigns. Try asking me to pause a campaign, show performance, or adjust budgets.",
       ts: new Date(),
     },
   ]);
@@ -290,8 +311,16 @@ export default function Home() {
   const [chatThinking, setChatThinking] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Campaigns state
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [togglingCampaign, setTogglingCampaign] = useState<string | null>(null);
+
   // Brand assets state
-  const [assets] = useState<{ name: string; type: string; size: string }[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(false);
+  const [uploadingAsset, setUploadingAsset] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Relative time ticker
   useEffect(() => {
@@ -478,7 +507,7 @@ export default function Home() {
     else { setSortCol(col); setSortDir("desc"); }
   };
 
-  // ── Chat handler ──────────────────────────────────────────────────────────
+  // ── Chat handler (real OpenAI) ────────────────────────────────────────────
 
   const sendChat = useCallback(async (text: string) => {
     if (!text.trim()) return;
@@ -486,17 +515,126 @@ export default function Home() {
     setChatMessages(prev => [...prev, userMsg]);
     setChatInput("");
     setChatThinking(true);
-    // Simulate response — real integration requires backend route
-    await new Promise(r => setTimeout(r, 1200));
-    const reply: ChatMessage = {
-      id: (Date.now() + 1).toString(),
-      role: "assistant",
-      text: `Your request has been noted. To execute ad commands (pause campaigns, adjust budgets, launch ads), connect the Facebook Ads Management API in your backend. Your message: "${text.trim()}"`,
-      ts: new Date(),
-    };
-    setChatMessages(prev => [...prev, reply]);
-    setChatThinking(false);
+    try {
+      const history = chatMessages
+        .filter(m => m.id !== "welcome")
+        .map(m => ({ role: m.role, content: m.text }));
+      history.push({ role: "user", content: text.trim() });
+
+      const res  = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: history,
+          assets: assets.map(a => ({ name: a.name })),
+        }),
+      });
+      const data = await res.json();
+      const replyText = data.error ? `Error: ${data.error}` : (data.reply ?? "No response.");
+      setChatMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        text: replyText,
+        ts: new Date(),
+      }]);
+      // Refresh campaigns if AI may have changed statuses
+      if (/pause|resume|activ/i.test(text)) fetchCampaigns();
+    } catch {
+      setChatMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        text: "Sorry, something went wrong reaching the AI. Please try again.",
+        ts: new Date(),
+      }]);
+    } finally {
+      setChatThinking(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatMessages, assets]);
+
+  // ── Campaigns ─────────────────────────────────────────────────────────────
+
+  const fetchCampaigns = useCallback(async () => {
+    setLoadingCampaigns(true);
+    try {
+      const res  = await fetch(`/api/fb-campaigns?account=${ACCOUNT_IDS[account]}`);
+      const data = await res.json();
+      if (!data.error) setCampaigns(data.campaigns ?? []);
+    } catch { /* swallow */ } finally {
+      setLoadingCampaigns(false);
+    }
+  }, [account]);
+
+  const toggleCampaign = useCallback(async (campaignId: string, currentStatus: string) => {
+    setTogglingCampaign(campaignId);
+    const newStatus = currentStatus === "ACTIVE" ? "PAUSED" : "ACTIVE";
+    try {
+      const res  = await fetch("/api/fb-campaigns", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId, status: newStatus }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCampaigns(prev => prev.map(c =>
+          c.id === campaignId ? { ...c, status: newStatus as Campaign["status"] } : c
+        ));
+      }
+    } catch { /* swallow */ } finally {
+      setTogglingCampaign(null);
+    }
   }, []);
+
+  // ── Assets ────────────────────────────────────────────────────────────────
+
+  const fetchAssets = useCallback(async () => {
+    setLoadingAssets(true);
+    try {
+      const res  = await fetch("/api/assets");
+      const data = await res.json();
+      if (!data.error) setAssets(data.assets ?? []);
+    } catch { /* swallow */ } finally {
+      setLoadingAssets(false);
+    }
+  }, []);
+
+  const uploadAsset = useCallback(async (file: File) => {
+    setUploadingAsset(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res  = await fetch("/api/assets", { method: "POST", body: form });
+      const data = await res.json();
+      if (!data.error) setAssets(prev => [data, ...prev]);
+    } catch { /* swallow */ } finally {
+      setUploadingAsset(false);
+    }
+  }, []);
+
+  const deleteAsset = useCallback(async (name: string) => {
+    setAssets(prev => prev.filter(a => a.name !== name));
+    try {
+      await fetch("/api/assets", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+    } catch { /* swallow */ }
+  }, []);
+
+  // Load campaigns + assets when switching to Ad Management tab
+  useEffect(() => {
+    if (tab === "ads") {
+      fetchCampaigns();
+      fetchAssets();
+    }
+  }, [tab, fetchCampaigns, fetchAssets]);
+
+  // Re-fetch campaigns when account changes
+  useEffect(() => {
+    if (tab === "ads") fetchCampaigns();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account]);
 
   // ─── Table header style ───────────────────────────────────────────────────
 
@@ -844,199 +982,67 @@ export default function Home() {
         {/* ══════════════════════════════════════════════════════════════════ */}
         {tab === "ads" && (
           <>
-            {/* ── Section label ─────────────────────────────────────────── */}
-            <div>
-              <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Ad Management</h1>
-              <p style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>
-                {DATE_RANGE_LABELS[dateRange]} · {ACCOUNT_LABELS[account]}
-              </p>
+            {/* ── Header + inner tab bar ────────────────────────────────── */}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Ad Management</h1>
+                <p style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>
+                  {DATE_RANGE_LABELS[dateRange]} · {ACCOUNT_LABELS[account]}
+                </p>
+              </div>
+              {/* Inner tab pills */}
+              <div style={{ display: "flex", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 3, gap: 2 }}>
+                {([
+                  { key: "chat",    label: "AI Command" },
+                  { key: "metrics", label: "Metrics" },
+                  { key: "assets",  label: "Brand Assets" },
+                ] as { key: AdTab; label: string }[]).map(t => (
+                  <button key={t.key} onClick={() => setAdTab(t.key)}
+                    style={{
+                      padding: "6px 16px", borderRadius: 7, fontSize: 13, fontWeight: 500,
+                      border: "none", cursor: "pointer", transition: "all 0.15s",
+                      background: adTab === t.key ? C.card : "transparent",
+                      color: adTab === t.key ? C.text : C.textMuted,
+                      boxShadow: adTab === t.key ? C.shadow : "none",
+                    }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* ── Facebook Metrics ──────────────────────────────────────── */}
-            <section>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                <div style={{ width: 20, height: 20, borderRadius: 5, background: "#1877f2", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <svg width={11} height={11} fill="white" viewBox="0 0 24 24">
-                    <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                  </svg>
-                </div>
-                <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Facebook Metrics</h2>
-                <span style={{ fontSize: 11, fontWeight: 500, padding: "3px 8px", borderRadius: 20, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
-                  {ACCOUNT_LABELS[account]} · {DATE_RANGE_LABELS[dateRange]}
-                </span>
-                {syncingFb && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.textMuted }}>
-                    <Spinner size={12} /> Fetching…
-                  </span>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <FbPill label="Impressions" value={fbMetrics ? fmtNum(fbMetrics.impressions) : "—"} loading={syncingFb && !fbMetrics} />
-                <FbPill label="Reach"       value={fbMetrics ? fmtNum(fbMetrics.reach)       : "—"} loading={syncingFb && !fbMetrics} />
-                <FbPill label="Clicks"      value={fbMetrics ? fmtNum(fbMetrics.clicks)      : "—"} loading={syncingFb && !fbMetrics} />
-                <FbPill label="CTR"         value={fbMetrics ? `${fbMetrics.ctr.toFixed(2)}%`  : "—"} loading={syncingFb && !fbMetrics} />
-                <FbPill label="CPM"         value={fbMetrics ? `$${fbMetrics.cpm.toFixed(2)}`  : "—"} loading={syncingFb && !fbMetrics} />
-                <FbPill label="CPC"         value={fbMetrics ? `$${fbMetrics.cpc.toFixed(2)}`  : "—"} loading={syncingFb && !fbMetrics} />
-                <FbPill label="Total Spend" value={fbMetrics ? fmtMoney(fbMetrics.spend)      : "—"} loading={syncingFb && !fbMetrics} />
-              </div>
-            </section>
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* INNER TAB: AI COMMAND CHAT                               */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {adTab === "chat" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16, alignItems: "start" }}>
 
-            {/* ── Ad Performance Table ──────────────────────────────────── */}
-            <section>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-                <div>
-                  <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Ad Performance</h2>
-                  <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Click column headers to sort</p>
-                </div>
-                <select value={adFilter} onChange={e => setAdFilter(e.target.value)} style={{ ...selectStyle, maxWidth: 220 }}>
-                  <option value="all">All ads</option>
-                  {allAdNames.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </div>
-
-              {/* Desktop */}
-              <div style={{
-                background: C.card,
-                border: `1px solid ${loadingData || syncingFb ? C.blue + "30" : C.border}`,
-                borderRadius: 14, overflow: "hidden", boxShadow: C.shadow,
-                position: "relative", transition: "border-color 0.3s",
-              }} className="hidden sm:block">
-                {(loadingData || syncingFb) && (
-                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, overflow: "hidden", zIndex: 1 }}>
-                    <div style={{
-                      position: "absolute", top: 0, bottom: 0, width: "35%",
-                      background: `linear-gradient(90deg, transparent, ${C.blue}60, transparent)`,
-                      animation: "scan 1.6s ease-in-out infinite",
-                    }} />
-                  </div>
-                )}
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
-                        {([
-                          { col: "adName", label: "Ad Name" }, { col: "spend", label: "Spend" },
-                          { col: "leads",  label: "Leads" },   { col: "sales", label: "Sales" },
-                          { col: "conv",   label: "Conv %" },  { col: "cac",   label: "CAC" },
-                        ] as { col: SortCol; label: string }[]).map(({ col, label }) => (
-                          <th key={col} style={{ ...thStyle, cursor: "pointer" }} onClick={() => handleSort(col)}>
-                            {label}<SortIcon active={sortCol === col} dir={sortDir} />
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {loadingData
-                        ? [...Array(3)].map((_, i) => <SkeletonRow key={i} cols={6} />)
-                        : adStats.length === 0
-                          ? <tr><td colSpan={6} style={{ padding: "60px 20px", textAlign: "center", fontSize: 13, color: C.textMuted }}>No ad data for this period.</td></tr>
-                          : adStats.map((row, i) => (
-                              <tr key={row.adName}
-                                style={{ borderBottom: i < adStats.length - 1 ? `1px solid ${C.border}` : "none", transition: "background 0.12s" }}
-                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "#f8fafc"}
-                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}>
-                                <td style={{ padding: "13px 20px", fontWeight: 600, color: C.text }}>{row.adName}</td>
-                                <td style={{ padding: "13px 20px" }}>
-                                  {syncingFb && row.spend === 0
-                                    ? <div className="skeleton" style={{ height: 14, width: 56, borderRadius: 4 }} />
-                                    : row.spend > 0
-                                      ? <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                          <span style={{ fontWeight: 600, color: C.text }}>{fmtMoney(row.spend)}</span>
-                                          {row.fromFacebook && (
-                                            <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", padding: "2px 5px", borderRadius: 4, color: "#1d4ed8", background: "#eff6ff", border: "1px solid #bfdbfe" }}>FB</span>
-                                          )}
-                                        </span>
-                                      : <span style={{ color: C.textMuted }}>—</span>}
-                                </td>
-                                <td style={{ padding: "13px 20px", color: C.textSec }}>{row.leads}</td>
-                                <td style={{ padding: "13px 20px", fontWeight: 600, color: C.green }}>{row.sales}</td>
-                                <td style={{ padding: "13px 20px", color: C.textSec }}>
-                                  {row.conv > 0 ? `${row.conv.toFixed(1)}%` : <span style={{ color: C.textMuted }}>—</span>}
-                                </td>
-                                <td style={{ padding: "13px 20px", fontWeight: 600, color: C.purple }}>
-                                  {row.cac > 0 ? fmtMoney(row.cac) : <span style={{ color: C.textMuted, fontWeight: 400 }}>—</span>}
-                                </td>
-                              </tr>
-                            ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Mobile ad cards */}
-              <div className="sm:hidden" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {loadingData
-                  ? [...Array(3)].map((_, i) => (
-                      <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-                        <div className="skeleton" style={{ height: 14, width: 160, borderRadius: 4, marginBottom: 12 }} />
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
-                          {[...Array(4)].map((_, j) => (
-                            <div key={j} className="skeleton" style={{ height: 40, borderRadius: 8 }} />
-                          ))}
-                        </div>
-                      </div>
-                    ))
-                  : adStats.length === 0
-                    ? <p style={{ textAlign: "center", padding: "40px 0", fontSize: 13, color: C.textMuted }}>No ad data for this period.</p>
-                    : adStats.map(row => (
-                        <div key={row.adName} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                            <p style={{ fontWeight: 600, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{row.adName}</p>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                              {row.fromFacebook && <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", padding: "2px 5px", borderRadius: 4, color: "#1d4ed8", background: "#eff6ff", border: "1px solid #bfdbfe" }}>FB</span>}
-                              {row.spend > 0 && <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{fmtMoney(row.spend)}</span>}
-                            </div>
-                          </div>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
-                            {[
-                              { label: "Leads", value: row.leads.toString(),                            color: C.textSec },
-                              { label: "Sales", value: row.sales.toString(),                            color: C.green },
-                              { label: "Conv",  value: row.conv > 0 ? `${row.conv.toFixed(1)}%` : "—", color: C.textSec },
-                              { label: "CAC",   value: row.cac  > 0 ? fmtMoney(row.cac)         : "—", color: C.purple },
-                            ].map(cell => (
-                              <div key={cell.label} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
-                                <p style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: C.textMuted, marginBottom: 4 }}>{cell.label}</p>
-                                <p style={{ fontSize: 13, fontWeight: 700, color: cell.color }}>{cell.value}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-              </div>
-            </section>
-
-            {/* ── Two-column bottom row: Chat + Brand Assets ────────────── */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="grid-cols-1 lg:grid-cols-2">
-
-              {/* ── AI Chat ───────────────────────────────────────────────── */}
-              <section style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <div style={{ marginBottom: 14 }}>
-                  <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Ad Command Center</h2>
-                  <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Ask AI to pause, launch, or adjust your campaigns</p>
-                </div>
+                {/* Chat panel */}
                 <div style={{
                   background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
-                  boxShadow: C.shadow, display: "flex", flexDirection: "column", height: 420,
+                  boxShadow: C.shadow, display: "flex", flexDirection: "column", height: 600,
                 }}>
+                  {/* Chat header */}
+                  <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>🌿</div>
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Ad Command Center</p>
+                      <p style={{ fontSize: 11, color: C.green }}>● Powered by GPT-4o mini</p>
+                    </div>
+                  </div>
+
                   {/* Messages */}
-                  <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
                     {chatMessages.map(msg => (
-                      <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                      <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
                         {msg.role === "assistant" && (
-                          <div style={{
-                            width: 26, height: 26, borderRadius: 8, background: "linear-gradient(135deg, #16a34a, #15803d)",
-                            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12,
-                            flexShrink: 0, marginRight: 8, alignSelf: "flex-end",
-                          }}>🌿</div>
+                          <div style={{ width: 26, height: 26, borderRadius: 8, background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0, alignSelf: "flex-end" }}>🌿</div>
                         )}
                         <div style={{
-                          maxWidth: "75%",
-                          padding: "10px 14px",
+                          maxWidth: "75%", padding: "10px 14px", fontSize: 13, lineHeight: 1.55,
                           borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
                           background: msg.role === "user" ? C.blue : C.bg,
                           color: msg.role === "user" ? "#fff" : C.text,
-                          fontSize: 13,
-                          lineHeight: 1.5,
                           border: msg.role === "assistant" ? `1px solid ${C.border}` : "none",
                         }}>
                           {msg.text}
@@ -1045,7 +1051,7 @@ export default function Home() {
                     ))}
                     {chatThinking && (
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ width: 26, height: 26, borderRadius: 8, background: "linear-gradient(135deg, #16a34a, #15803d)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>🌿</div>
+                        <div style={{ width: 26, height: 26, borderRadius: 8, background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>🌿</div>
                         <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: "14px 14px 14px 4px", padding: "10px 16px" }}>
                           <Spinner size={14} color={C.textMuted} />
                         </div>
@@ -1054,39 +1060,31 @@ export default function Home() {
                     <div ref={chatEndRef} />
                   </div>
 
-                  {/* Quick actions */}
-                  <div style={{ padding: "0 14px 10px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {["Pause all campaigns", "Show top performer", "Reduce budget 20%", "Launch new campaign"].map(q => (
-                      <button key={q} onClick={() => sendChat(q)}
-                        style={{
-                          fontSize: 11, fontWeight: 500, padding: "4px 10px", borderRadius: 20,
-                          background: C.blueSoft, color: C.blueText, border: `1px solid #bfdbfe`,
-                          cursor: "pointer",
-                        }}>
+                  {/* Quick prompts */}
+                  <div style={{ padding: "8px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {["List my campaigns", "Pause all campaigns", "Which ad has the best CTR?", "Show top performer"].map(q => (
+                      <button key={q} onClick={() => sendChat(q)} disabled={chatThinking}
+                        style={{ fontSize: 11, fontWeight: 500, padding: "4px 10px", borderRadius: 20, background: C.blueSoft, color: C.blueText, border: "1px solid #bfdbfe", cursor: "pointer" }}>
                         {q}
                       </button>
                     ))}
                   </div>
 
                   {/* Input */}
-                  <div style={{ padding: "10px 14px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8 }}>
+                  <div style={{ padding: "10px 14px 14px", display: "flex", gap: 8 }}>
                     <input
                       type="text"
-                      placeholder="Type a command…"
+                      placeholder="Ask about your campaigns…"
                       value={chatInput}
                       onChange={e => setChatInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(chatInput); } }}
-                      style={{
-                        flex: 1, padding: "8px 12px", fontSize: 13, borderRadius: 8, outline: "none",
-                        background: C.bg, border: `1px solid ${C.border}`, color: C.text,
-                      }}
+                      style={{ flex: 1, padding: "9px 12px", fontSize: 13, borderRadius: 8, outline: "none", background: C.bg, border: `1px solid ${C.border}`, color: C.text }}
                     />
                     <button onClick={() => sendChat(chatInput)} disabled={!chatInput.trim() || chatThinking}
                       style={{
-                        padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-                        background: chatInput.trim() && !chatThinking ? C.blue : C.bg,
+                        padding: "9px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none",
+                        background: chatInput.trim() && !chatThinking ? C.blue : C.border,
                         color: chatInput.trim() && !chatThinking ? "#fff" : C.textMuted,
-                        border: `1px solid ${chatInput.trim() && !chatThinking ? C.blue : C.border}`,
                         cursor: chatInput.trim() && !chatThinking ? "pointer" : "not-allowed",
                         transition: "all 0.15s",
                       }}>
@@ -1094,78 +1092,304 @@ export default function Home() {
                     </button>
                   </div>
                 </div>
-              </section>
 
-              {/* ── Brand Assets ──────────────────────────────────────────── */}
-              <section style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <div style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                {/* Campaigns side panel */}
+                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, overflow: "hidden" }}>
+                  <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Live Campaigns</p>
+                    <button onClick={fetchCampaigns} disabled={loadingCampaigns}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+                      {loadingCampaigns ? <Spinner size={12} /> : (
+                        <svg width={12} height={12} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      )}
+                      Refresh
+                    </button>
+                  </div>
+                  <div style={{ maxHeight: 548, overflowY: "auto" }}>
+                    {loadingCampaigns
+                      ? [...Array(4)].map((_, i) => (
+                          <div key={i} style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}` }}>
+                            <div className="skeleton" style={{ height: 13, width: "70%", borderRadius: 4, marginBottom: 8 }} />
+                            <div className="skeleton" style={{ height: 11, width: "40%", borderRadius: 4 }} />
+                          </div>
+                        ))
+                      : campaigns.length === 0
+                        ? (
+                          <div style={{ padding: 24, textAlign: "center" }}>
+                            <p style={{ fontSize: 13, color: C.textMuted }}>No campaigns found.</p>
+                            <p style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Check your Facebook account connection.</p>
+                          </div>
+                        )
+                        : campaigns.map(c => {
+                            const isActive  = c.status === "ACTIVE";
+                            const toggling  = togglingCampaign === c.id;
+                            const budget    = c.daily_budget
+                              ? `$${(parseInt(c.daily_budget) / 100).toFixed(2)}/day`
+                              : c.lifetime_budget
+                                ? `$${(parseInt(c.lifetime_budget) / 100).toFixed(2)} lifetime`
+                                : null;
+                            return (
+                              <div key={c.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "flex-start", gap: 10 }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <p style={{ fontSize: 13, fontWeight: 500, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.name}>{c.name}</p>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                                    <span style={{
+                                      fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 20,
+                                      color: isActive ? C.green : C.textMuted,
+                                      background: isActive ? C.greenSoft : C.bg,
+                                      border: `1px solid ${isActive ? C.green + "30" : C.border}`,
+                                    }}>
+                                      {c.status}
+                                    </span>
+                                    {budget && <span style={{ fontSize: 11, color: C.textMuted }}>{budget}</span>}
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => toggleCampaign(c.id, c.status)}
+                                  disabled={toggling}
+                                  title={isActive ? "Pause campaign" : "Resume campaign"}
+                                  style={{
+                                    flexShrink: 0, width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.border}`,
+                                    background: C.bg, cursor: toggling ? "not-allowed" : "pointer",
+                                    display: "flex", alignItems: "center", justifyContent: "center",
+                                    opacity: toggling ? 0.5 : 1, transition: "all 0.15s",
+                                  }}>
+                                  {toggling
+                                    ? <Spinner size={12} />
+                                    : isActive
+                                      ? <svg width={12} height={12} fill={C.amber} viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
+                                      : <svg width={12} height={12} fill={C.green} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21" /></svg>}
+                                </button>
+                              </div>
+                            );
+                          })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* INNER TAB: METRICS                                        */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {adTab === "metrics" && (
+              <>
+                {/* FB Summary Pills */}
+                <section>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                    <div style={{ width: 20, height: 20, borderRadius: 5, background: "#1877f2", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <svg width={11} height={11} fill="white" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" /></svg>
+                    </div>
+                    <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Facebook Overview</h2>
+                    <span style={{ fontSize: 11, fontWeight: 500, padding: "3px 8px", borderRadius: 20, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
+                      {ACCOUNT_LABELS[account]} · {DATE_RANGE_LABELS[dateRange]}
+                    </span>
+                    {syncingFb && <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.textMuted }}><Spinner size={12} /> Fetching…</span>}
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <FbPill label="Impressions" value={fbMetrics ? fmtNum(fbMetrics.impressions) : "—"} loading={syncingFb && !fbMetrics} />
+                    <FbPill label="Reach"       value={fbMetrics ? fmtNum(fbMetrics.reach)       : "—"} loading={syncingFb && !fbMetrics} />
+                    <FbPill label="Clicks"      value={fbMetrics ? fmtNum(fbMetrics.clicks)      : "—"} loading={syncingFb && !fbMetrics} />
+                    <FbPill label="CTR"         value={fbMetrics ? `${fbMetrics.ctr.toFixed(2)}%`  : "—"} loading={syncingFb && !fbMetrics} />
+                    <FbPill label="CPM"         value={fbMetrics ? `$${fbMetrics.cpm.toFixed(2)}`  : "—"} loading={syncingFb && !fbMetrics} />
+                    <FbPill label="CPC"         value={fbMetrics ? `$${fbMetrics.cpc.toFixed(2)}`  : "—"} loading={syncingFb && !fbMetrics} />
+                    <FbPill label="Total Spend" value={fbMetrics ? fmtMoney(fbMetrics.spend)      : "—"} loading={syncingFb && !fbMetrics} />
+                  </div>
+                </section>
+
+                {/* Ad Performance Table */}
+                <section>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+                    <div>
+                      <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Ad Performance</h2>
+                      <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Click column headers to sort</p>
+                    </div>
+                    <select value={adFilter} onChange={e => setAdFilter(e.target.value)} style={{ ...selectStyle, maxWidth: 220 }}>
+                      <option value="all">All ads</option>
+                      {allAdNames.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div style={{
+                    background: C.card, border: `1px solid ${loadingData || syncingFb ? C.blue + "30" : C.border}`,
+                    borderRadius: 14, overflow: "hidden", boxShadow: C.shadow,
+                    position: "relative", transition: "border-color 0.3s",
+                  }}>
+                    {(loadingData || syncingFb) && (
+                      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, overflow: "hidden", zIndex: 1 }}>
+                        <div style={{ position: "absolute", top: 0, bottom: 0, width: "35%", background: `linear-gradient(90deg,transparent,${C.blue}60,transparent)`, animation: "scan 1.6s ease-in-out infinite" }} />
+                      </div>
+                    )}
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr style={{ borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
+                            {([
+                              { col: "adName", label: "Ad Name" }, { col: "spend", label: "Spend" },
+                              { col: "leads",  label: "Leads" },   { col: "sales", label: "Sales" },
+                              { col: "conv",   label: "Conv %" },  { col: "cac",   label: "CAC" },
+                            ] as { col: SortCol; label: string }[]).map(({ col, label }) => (
+                              <th key={col} style={{ ...thStyle, cursor: "pointer" }} onClick={() => handleSort(col)}>
+                                {label}<SortIcon active={sortCol === col} dir={sortDir} />
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {loadingData
+                            ? [...Array(3)].map((_, i) => <SkeletonRow key={i} cols={6} />)
+                            : adStats.length === 0
+                              ? <tr><td colSpan={6} style={{ padding: "60px 20px", textAlign: "center", fontSize: 13, color: C.textMuted }}>No ad data for this period.</td></tr>
+                              : adStats.map((row, i) => (
+                                  <tr key={row.adName}
+                                    style={{ borderBottom: i < adStats.length - 1 ? `1px solid ${C.border}` : "none", transition: "background 0.12s" }}
+                                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "#f8fafc"}
+                                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}>
+                                    <td style={{ padding: "13px 20px", fontWeight: 600, color: C.text }}>{row.adName}</td>
+                                    <td style={{ padding: "13px 20px" }}>
+                                      {syncingFb && row.spend === 0
+                                        ? <div className="skeleton" style={{ height: 14, width: 56, borderRadius: 4 }} />
+                                        : row.spend > 0
+                                          ? <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                              <span style={{ fontWeight: 600, color: C.text }}>{fmtMoney(row.spend)}</span>
+                                              {row.fromFacebook && <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", padding: "2px 5px", borderRadius: 4, color: "#1d4ed8", background: "#eff6ff", border: "1px solid #bfdbfe" }}>FB</span>}
+                                            </span>
+                                          : <span style={{ color: C.textMuted }}>—</span>}
+                                    </td>
+                                    <td style={{ padding: "13px 20px", color: C.textSec }}>{row.leads}</td>
+                                    <td style={{ padding: "13px 20px", fontWeight: 600, color: C.green }}>{row.sales}</td>
+                                    <td style={{ padding: "13px 20px", color: C.textSec }}>
+                                      {row.conv > 0 ? `${row.conv.toFixed(1)}%` : <span style={{ color: C.textMuted }}>—</span>}
+                                    </td>
+                                    <td style={{ padding: "13px 20px", fontWeight: 600, color: C.purple }}>
+                                      {row.cac > 0 ? fmtMoney(row.cac) : <span style={{ color: C.textMuted, fontWeight: 400 }}>—</span>}
+                                    </td>
+                                  </tr>
+                                ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </section>
+              </>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* INNER TAB: BRAND ASSETS                                   */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {adTab === "assets" && (
+              <section>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                   <div>
                     <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Brand Assets</h2>
-                    <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Logos, creatives, and ad images</p>
+                    <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
+                      Logos and creatives — the AI can reference these when generating ads
+                    </p>
                   </div>
-                  <label style={{
-                    fontSize: 12, fontWeight: 600, padding: "6px 14px", borderRadius: 8,
-                    background: C.card, border: `1px solid ${C.border}`, color: C.text,
-                    cursor: "pointer", boxShadow: C.shadow,
-                  }}>
-                    Upload
-                    <input type="file" accept="image/*" multiple style={{ display: "none" }} />
-                  </label>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingAsset}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                      background: C.blue, color: "#fff", border: "none",
+                      cursor: uploadingAsset ? "not-allowed" : "pointer",
+                      opacity: uploadingAsset ? 0.6 : 1,
+                    }}>
+                    {uploadingAsset ? <Spinner size={13} color="#fff" /> : (
+                      <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                      </svg>
+                    )}
+                    {uploadingAsset ? "Uploading…" : "Upload file"}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,video/*,.svg,.pdf"
+                    multiple
+                    style={{ display: "none" }}
+                    onChange={e => {
+                      const files = Array.from(e.target.files ?? []);
+                      files.forEach(f => uploadAsset(f));
+                      e.target.value = "";
+                    }}
+                  />
                 </div>
-                <div style={{
-                  background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
-                  boxShadow: C.shadow, flex: 1, height: 420, display: "flex", flexDirection: "column",
-                }}>
-                  {assets.length === 0
-                    ? (
-                        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
-                          {/* Drag & drop zone */}
-                          <div style={{
-                            width: "100%", maxWidth: 280, padding: "32px 24px",
-                            border: `2px dashed ${C.border}`, borderRadius: 12,
-                            display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
-                            background: C.bg,
-                          }}>
-                            <div style={{ width: 44, height: 44, borderRadius: 10, background: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              <svg width={20} height={20} fill="none" viewBox="0 0 24 24" stroke={C.blue} strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                              </svg>
-                            </div>
-                            <div style={{ textAlign: "center" }}>
-                              <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Drop files here</p>
-                              <p style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>PNG, JPG, SVG up to 10MB</p>
-                            </div>
-                            <label style={{
-                              fontSize: 12, fontWeight: 600, padding: "6px 16px", borderRadius: 8,
-                              background: C.blue, color: "#fff", cursor: "pointer",
-                            }}>
-                              Browse files
-                              <input type="file" accept="image/*" multiple style={{ display: "none" }} />
-                            </label>
+
+                {loadingAssets
+                  ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+                      {[...Array(6)].map((_, i) => (
+                        <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+                          <div className="skeleton" style={{ height: 110 }} />
+                          <div style={{ padding: "10px 12px" }}>
+                            <div className="skeleton" style={{ height: 11, width: "80%", borderRadius: 4 }} />
                           </div>
-                          <p style={{ fontSize: 11, color: C.textMuted, marginTop: 20, textAlign: "center" }}>
-                            Upload logos and ad creatives to keep them organized alongside your campaigns.
-                          </p>
                         </div>
-                      )
+                      ))}
+                    </div>
+                  )
+                  : assets.length === 0
+                    ? (
+                      <div style={{
+                        background: C.card, border: `2px dashed ${C.border}`, borderRadius: 14,
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                        padding: "60px 24px", gap: 12,
+                      }}>
+                        <div style={{ width: 48, height: 48, borderRadius: 12, background: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <svg width={22} height={22} fill="none" viewBox="0 0 24 24" stroke={C.blue} strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                          </svg>
+                        </div>
+                        <div style={{ textAlign: "center" }}>
+                          <p style={{ fontSize: 14, fontWeight: 600, color: C.text }}>No assets yet</p>
+                          <p style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>Upload your logo, ad creatives, and brand images.</p>
+                          <p style={{ fontSize: 12, color: C.textMuted }}>The AI will use these when you ask it to generate ads.</p>
+                        </div>
+                        <button onClick={() => fileInputRef.current?.click()}
+                          style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: C.blue, color: "#fff", border: "none", cursor: "pointer" }}>
+                          Browse files
+                        </button>
+                      </div>
+                    )
                     : (
-                        <div style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, overflowY: "auto" }}>
-                          {assets.map((a, i) => (
-                            <div key={i} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px", display: "flex", flexDirection: "column", gap: 6 }}>
-                              <div style={{ height: 70, borderRadius: 6, background: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                <svg width={20} height={20} fill="none" viewBox="0 0 24 24" stroke={C.blue} strokeWidth={1.5}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
-                                </svg>
-                              </div>
-                              <p style={{ fontSize: 11, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</p>
-                              <p style={{ fontSize: 10, color: C.textMuted }}>{a.size}</p>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+                        {assets.map(a => (
+                          <div key={a.name} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow, position: "relative", group: true } as React.CSSProperties}>
+                            {/* Preview */}
+                            <div style={{ height: 110, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                              {a.type?.startsWith("image/")
+                                ? <img src={a.url} alt={a.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                : (
+                                  <svg width={28} height={28} fill="none" viewBox="0 0 24 24" stroke={C.textMuted} strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                  </svg>
+                                )}
                             </div>
-                          ))}
-                        </div>
-                      )}
-                </div>
+                            {/* Info + delete */}
+                            <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <p style={{ fontSize: 11, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={a.name}>
+                                  {a.name.replace(/^\d+_/, "")}
+                                </p>
+                                <p style={{ fontSize: 10, color: C.textMuted, marginTop: 1 }}>
+                                  {a.size > 1024 * 1024 ? `${(a.size / 1024 / 1024).toFixed(1)} MB` : `${Math.round(a.size / 1024)} KB`}
+                                </p>
+                              </div>
+                              <button onClick={() => deleteAsset(a.name)} title="Delete"
+                                style={{ flexShrink: 0, background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: 2, borderRadius: 4 }}>
+                                <svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
               </section>
-            </div>
+            )}
           </>
         )}
 
