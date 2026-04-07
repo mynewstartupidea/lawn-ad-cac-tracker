@@ -4,18 +4,23 @@ import { supabase } from "../../lib/supabase";
 // Email regex — matches standard email addresses
 const EMAIL_RE = /[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}/;
 
-// Extracts an email from any message that starts with "sold" (case-insensitive),
-// regardless of spacing, punctuation, or formatting between "sold" and the address.
+// Extracts an email from any message where "sold" appears at/near the start
+// (case-insensitive), regardless of leading punctuation, spacing, or formatting.
 //
 // Examples that all work:
 //   sold: john@gmail.com
 //   SOLD john@gmail.com
 //   sold.   john@gmail.com
 //   sold! - john@gmail.com
+//   (SOLD: john@gmail.com\nJohn Smith - Mr.)   ← leading paren, multiline
+//   [SOLD] john@gmail.com
 //   sold <mailto:john@gmail.com|john@gmail.com>   ← Slack auto-linkify format
 //   Sold - paid - john@gmail.com
 function extractSoldEmail(text: string): string | null {
-  if (!text.toLowerCase().trimStart().startsWith("sold")) return null;
+  // Strip any leading non-letter characters (parens, brackets, spaces, etc.)
+  // so "(SOLD: ..." and "[SOLD] ..." both work
+  const stripped = text.trimStart().replace(/^[^a-zA-Z]+/, "");
+  if (!stripped.toLowerCase().startsWith("sold")) return null;
 
   // Strip Slack's mailto wrapper before matching: <mailto:email|email> → email
   const cleaned = text.replace(/<mailto:[^|>]*\|([^>]+)>/g, "$1")
