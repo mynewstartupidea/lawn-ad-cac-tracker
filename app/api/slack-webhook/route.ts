@@ -11,9 +11,11 @@ function extractSoldEmail(text: string): string | null {
   const lower = text.toLowerCase().trim();
   if (!lower.startsWith("sold")) return null;
 
-  // Strip the "sold" prefix and optional colon
+  // Strip the "sold" prefix and optional colon/punctuation
   let rest = text.slice(4).trim();
-  if (rest.startsWith(":")) rest = rest.slice(1).trim();
+  if (rest.startsWith(":") || rest.startsWith("-") || rest.startsWith("!")) {
+    rest = rest.slice(1).trim();
+  }
 
   // Handle Slack's mailto link: <mailto:user@example.com|user@example.com>
   if (rest.includes("mailto:")) {
@@ -26,54 +28,72 @@ function extractSoldEmail(text: string): string | null {
     }
   }
 
-  // Remove any leftover angle brackets or whitespace
-  const email = rest.replace(/[<>\s]/g, "").toLowerCase();
+  // Remove any leftover angle brackets or whitespace, take first token only
+  const email = rest.replace(/[<>]/g, "").trim().split(/\s+/)[0].toLowerCase();
 
   if (!email || !email.includes("@") || !email.includes(".")) return null;
   return email;
+}
+
+async function handleSoldMessage(text: string) {
+  const email = extractSoldEmail(text.trim());
+  if (!email) return;
+
+  const { data: existingSale } = await supabase
+    .from("sales")
+    .select("id")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (!existingSale) {
+    const { error } = await supabase
+      .from("sales")
+      .insert([{ email, status: "sold" }]);
+
+    if (error) {
+      console.error("[Slack] insert error for", email, error);
+    } else {
+      console.log("[Slack] sale recorded:", email);
+    }
+  } else {
+    console.log("[Slack] sale already exists:", email);
+  }
 }
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    // Slack URL verification (required on first webhook setup)
+    // Slack URL verification
     if (body.type === "url_verification") {
       return NextResponse.json({ challenge: body.challenge });
     }
 
     const event = body.event;
+    if (!event || event.type !== "message") {
+      return NextResponse.json({ ok: true });
+    }
 
-    if (event?.type === "message" && event?.text) {
-      const text: string = event.text.trim();
-      const email = extractSoldEmail(text);
+    let text: string | undefined;
 
-      if (email) {
-        const { data: existingSale } = await supabase
-          .from("sales")
-          .select("id")
-          .eq("email", email)
-          .maybeSingle();
+    if (!event.subtype) {
+      // Regular user message
+      text = event.text;
+    } else if (event.subtype === "message_changed") {
+      // Slack re-sends the message after linkifying emails/URLs.
+      // The updated text lives at event.message.text, not event.text.
+      text = event.message?.text;
+    }
+    // Ignore message_deleted, bot_message, etc.
 
-        if (!existingSale) {
-          const { error } = await supabase
-            .from("sales")
-            .insert([{ email, status: "sold" }]);
-
-          if (error) {
-            console.error("[Slack webhook] error saving sale for", email, error);
-          } else {
-            console.log("[Slack webhook] sale recorded for:", email);
-          }
-        } else {
-          console.log("[Slack webhook] sale already exists for:", email);
-        }
-      }
+    if (text) {
+      console.log("[Slack] message received:", JSON.stringify(text));
+      await handleSoldMessage(text);
     }
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error("[Slack webhook] error:", error);
+    console.error("[Slack] error:", error);
     return NextResponse.json({ error: "failed" }, { status: 500 });
   }
 }

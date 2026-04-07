@@ -262,6 +262,23 @@ export default function Home() {
     }
   }, []);
 
+  // ── Realtime: watch sales table for new inserts ──────────────────────────────
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("sales-realtime")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "sales" }, payload => {
+        setSales(prev => {
+          const sale = payload.new as Sale;
+          if (prev.some(s => s.id === sale.id)) return prev;
+          return [sale, ...prev];
+        });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
   // ── Initial load ─────────────────────────────────────────────────────────────
 
   useEffect(() => {
