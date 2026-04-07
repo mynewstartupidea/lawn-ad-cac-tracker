@@ -1045,7 +1045,9 @@ export default function Home() {
                           color: msg.role === "user" ? "#fff" : C.text,
                           border: msg.role === "assistant" ? `1px solid ${C.border}` : "none",
                         }}>
-                          {msg.text}
+                          {msg.text.split("\n").map((line, i) => (
+                            <span key={i}>{line}{i < msg.text.split("\n").length - 1 && <br />}</span>
+                          ))}
                         </div>
                       </div>
                     ))}

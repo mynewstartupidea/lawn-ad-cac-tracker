@@ -140,6 +140,7 @@ export async function POST(req: Request) {
       ? `Available brand assets: ${assets.map(a => a.name).join(", ")}.`
       : "No brand assets uploaded yet.",
     "Be concise and action-oriented. When the user asks to pause or resume campaigns, do it directly using functions.",
+    "IMPORTANT: Never use markdown formatting. No **bold**, no ### headers, no bullet dashes. Use plain sentences and newlines only.",
   ].join(" ");
 
   const thread: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
