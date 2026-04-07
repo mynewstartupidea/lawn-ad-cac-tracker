@@ -1,62 +1,58 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../lib/supabase";
 
-// Extracts an email from a Slack message that starts with "sold".
-// Handles all variants:
-//   sold: email@example.com
-//   sold email@example.com
-//   SOLD: email@example.com
-//   SOLD <mailto:email@example.com|email@example.com>
+// Email regex — matches standard email addresses
+const EMAIL_RE = /[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}/;
+
+// Extracts an email from any message that starts with "sold" (case-insensitive),
+// regardless of spacing, punctuation, or formatting between "sold" and the address.
+//
+// Examples that all work:
+//   sold: john@gmail.com
+//   SOLD john@gmail.com
+//   sold.   john@gmail.com
+//   sold! - john@gmail.com
+//   sold <mailto:john@gmail.com|john@gmail.com>   ← Slack auto-linkify format
+//   Sold - paid - john@gmail.com
 function extractSoldEmail(text: string): string | null {
-  const lower = text.toLowerCase().trim();
-  if (!lower.startsWith("sold")) return null;
+  if (!text.toLowerCase().trimStart().startsWith("sold")) return null;
 
-  // Strip the "sold" prefix and optional colon/punctuation
-  let rest = text.slice(4).trim();
-  if (rest.startsWith(":") || rest.startsWith("-") || rest.startsWith("!")) {
-    rest = rest.slice(1).trim();
-  }
+  // Strip Slack's mailto wrapper before matching: <mailto:email|email> → email
+  const cleaned = text.replace(/<mailto:[^|>]*\|([^>]+)>/g, "$1")
+                      .replace(/<mailto:([^>]+)>/g, "$1");
 
-  // Handle Slack's mailto link: <mailto:user@example.com|user@example.com>
-  if (rest.includes("mailto:")) {
-    // Prefer the display part after "|" — it's the clean email
-    const pipeIdx = rest.indexOf("|");
-    if (pipeIdx !== -1) {
-      rest = rest.slice(pipeIdx + 1).replace(">", "").trim();
-    } else {
-      rest = rest.replace(/<mailto:/i, "").replace(">", "").trim();
-    }
-  }
+  const match = cleaned.match(EMAIL_RE);
+  if (!match) return null;
 
-  // Remove any leftover angle brackets or whitespace, take first token only
-  const email = rest.replace(/[<>]/g, "").trim().split(/\s+/)[0].toLowerCase();
-
-  if (!email || !email.includes("@") || !email.includes(".")) return null;
-  return email;
+  return match[0].toLowerCase();
 }
 
 async function handleSoldMessage(text: string) {
-  const email = extractSoldEmail(text.trim());
+  const email = extractSoldEmail(text);
   if (!email) return;
 
-  const { data: existingSale } = await supabase
+  console.log("[Slack] sold message detected, email:", email);
+
+  // Deduplicate — don't insert if sale already recorded
+  const { data: existing } = await supabase
     .from("sales")
     .select("id")
     .eq("email", email)
     .maybeSingle();
 
-  if (!existingSale) {
-    const { error } = await supabase
-      .from("sales")
-      .insert([{ email, status: "sold" }]);
-
-    if (error) {
-      console.error("[Slack] insert error for", email, error);
-    } else {
-      console.log("[Slack] sale recorded:", email);
-    }
-  } else {
+  if (existing) {
     console.log("[Slack] sale already exists:", email);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("sales")
+    .insert([{ email, status: "sold" }]);
+
+  if (error) {
+    console.error("[Slack] insert error for", email, error);
+  } else {
+    console.log("[Slack] sale recorded:", email);
   }
 }
 
@@ -64,7 +60,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    // Slack URL verification
+    // Slack URL verification challenge
     if (body.type === "url_verification") {
       return NextResponse.json({ challenge: body.challenge });
     }
@@ -77,23 +73,23 @@ export async function POST(req: Request) {
     let text: string | undefined;
 
     if (!event.subtype) {
-      // Regular user message
+      // Normal user message
       text = event.text;
     } else if (event.subtype === "message_changed") {
-      // Slack re-sends the message after linkifying emails/URLs.
-      // The updated text lives at event.message.text, not event.text.
+      // Slack fires this after linkifying emails/URLs in the message.
+      // The reformatted text is at event.message.text, not event.text.
       text = event.message?.text;
     }
-    // Ignore message_deleted, bot_message, etc.
+    // Intentionally ignore: message_deleted, bot_message, message_replied, etc.
 
     if (text) {
-      console.log("[Slack] message received:", JSON.stringify(text));
+      console.log("[Slack] raw text:", JSON.stringify(text));
       await handleSoldMessage(text);
     }
 
     return NextResponse.json({ ok: true });
-  } catch (error) {
-    console.error("[Slack] error:", error);
+  } catch (err) {
+    console.error("[Slack] error:", err);
     return NextResponse.json({ error: "failed" }, { status: 500 });
   }
 }
