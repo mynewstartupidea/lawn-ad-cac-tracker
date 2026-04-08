@@ -315,39 +315,56 @@ export async function POST(req: Request) {
   const openai = new OpenAI({ apiKey: openaiKey });
   const log: Record<string, unknown> = { account, instruction };
 
+  // Quality passes if: all checks pass OR score >= 7 and critical checks (spelling + offer) pass
+  function isQualityGood(q: QualityResult): boolean {
+    if (q.pass) return true;
+    if (q.score < 7) return false;
+    const critical = ["Spelling & Grammar", "Offer Accuracy"];
+    return critical.every(name => q.checks.find(c => c.name === name)?.pass === true);
+  }
+
   try {
     // Round 1: generate copy
     let adCopy = await generateAdCopy(openai, instruction, ctx);
     let quality = await runQualityCheck(openai, adCopy, ctx);
     log.rounds = [{ round: 1, adCopy, quality }];
 
-    // Round 2: if quality failed, revise once
-    if (!quality.pass) {
+    // Round 2: if quality not good enough, revise once
+    if (!isQualityGood(quality)) {
       adCopy  = await generateAdCopy(openai, instruction, ctx, quality.feedback);
       quality = await runQualityCheck(openai, adCopy, ctx);
       (log.rounds as unknown[]).push({ round: 2, adCopy, quality });
     }
 
-    log.finalAdCopy = adCopy;
+    log.finalAdCopy  = adCopy;
     log.finalQuality = quality;
+    log.qualityGood  = isQualityGood(quality);
 
     // Generate image
     let imageUrl  = "";
     let imageHash = "";
     if (falKey) {
-      imageUrl  = await generateImage(adCopy.image_prompt, falKey);
+      imageUrl     = await generateImage(adCopy.image_prompt, falKey);
       log.imageUrl = imageUrl;
-      imageHash = await uploadImageToFacebook(imageUrl, ctx.accountId, fbToken);
-      log.imageHash = imageHash;
+      // Upload to Facebook — non-fatal if token lacks ads_management
+      try {
+        imageHash     = await uploadImageToFacebook(imageUrl, ctx.accountId, fbToken);
+        log.imageHash = imageHash;
+      } catch (uploadErr) {
+        log.imageUploadError = String(uploadErr);
+        console.warn("[ad-launch] FB image upload failed:", uploadErr);
+      }
     }
 
     // Create campaign (starts PAUSED for review)
-    if (quality.pass && imageHash) {
+    if (isQualityGood(quality) && imageHash) {
       const campaign = await createFacebookCampaign(adCopy, imageHash, ctx, fbToken, videoId);
       log.campaign = campaign;
       log.status   = "created_paused";
+    } else if (isQualityGood(quality) && imageUrl && !imageHash) {
+      log.status = "ready_needs_fb_permission";
     } else {
-      log.status = quality.pass ? "no_image" : "quality_failed";
+      log.status = "quality_failed";
     }
 
     return NextResponse.json({ success: true, ...log });
