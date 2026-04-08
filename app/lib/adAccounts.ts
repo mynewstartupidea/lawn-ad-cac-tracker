@@ -12,6 +12,7 @@ export const AD_ACCOUNTS = {
     location:        "Florida",
     label:           "Liquid Lawn Florida",
     fallbackImageHash: "2310b876955b9ebbcf5d4adce07c733d",
+    pixelId:           "1755980881367417",
   },
   georgia: {
     accountId:       "1467364857363196",
@@ -24,6 +25,7 @@ export const AD_ACCOUNTS = {
     location:        "Georgia",
     label:           "Liquid Lawn Georgia",
     fallbackImageHash: "685c0408f252f3ead5e2aabde65e3735",
+    pixelId:           "642251691534776",
   },
 } as const;
 

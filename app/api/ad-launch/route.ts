@@ -217,7 +217,7 @@ async function createFacebookCampaign(
   const camp = await campRes.json();
   if (camp.error) throw new Error(`Campaign: ${camp.error.message}`);
 
-  // 2. Ad Set
+  // 2. Ad Set — mirror exact settings from existing campaigns
   const adSetRes = await fetch(`${FB_BASE}/act_${ctx.accountId}/adsets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -225,9 +225,12 @@ async function createFacebookCampaign(
       name: `${adCopy.ad_name} - Ad Set`,
       campaign_id: camp.id,
       billing_event: "IMPRESSIONS",
-      optimization_goal: "LANDING_PAGE_VIEWS",
+      optimization_goal: "OFFSITE_CONVERSIONS",
+      promoted_object: {
+        pixel_id: ctx.pixelId,
+        custom_event_type: "LEAD",
+      },
       daily_budget: 5000,
-      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
       targeting,
       status: "PAUSED",
       access_token: accessToken,
