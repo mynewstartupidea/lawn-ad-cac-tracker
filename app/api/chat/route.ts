@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { AD_ACCOUNTS, AdAccount } from "../../lib/adAccounts";
 
 const FB_BASE = "https://graph.facebook.com/v21.0";
 
@@ -123,16 +124,30 @@ export async function POST(req: Request) {
   }
 
   const openai     = new OpenAI({ apiKey: openaiKey });
-  const accountIds = accountIdsRaw ? accountIdsRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
 
-  const { messages, assets } = (await req.json()) as {
+  const { messages, assets, account = "all" } = (await req.json()) as {
     messages: { role: "user" | "assistant"; content: string }[];
     assets?: { name: string }[];
+    account?: AdAccount | "all";
   };
+
+  // Filter account IDs based on selected account
+  const allAccountIds = accountIdsRaw ? accountIdsRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
+  const accountIds = account === "all"
+    ? allAccountIds
+    : [AD_ACCOUNTS[account as AdAccount]?.accountId].filter(Boolean) as string[];
+
+  // Build account-aware context for the system prompt
+  const accountCtx = account === "all"
+    ? "You are managing both Florida ($99 offer) and Georgia ($19 offer) accounts."
+    : account === "florida"
+    ? `You are managing the Florida account only. Current offer: ${AD_ACCOUNTS.florida.offer}. Landing page: ${AD_ACCOUNTS.florida.landingUrl}`
+    : `You are managing the Georgia account only. Current offer: ${AD_ACCOUNTS.georgia.offer}. Landing page: ${AD_ACCOUNTS.georgia.landingUrl}`;
 
   const systemPrompt = [
     "You are an AI assistant for Liquid Lawn's Facebook Ads management dashboard.",
-    "You help the team manage campaigns — pausing, resuming, checking performance.",
+    accountCtx,
+    "You help the team manage campaigns — pausing, resuming, checking performance, and launching new ads.",
     accessToken
       ? "You have live access to Facebook Ads via function calling. Always confirm before taking destructive actions."
       : "The Facebook Ads API is not connected (missing FACEBOOK_ACCESS_TOKEN). Provide advice only.",
