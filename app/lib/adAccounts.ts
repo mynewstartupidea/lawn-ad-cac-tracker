@@ -11,6 +11,7 @@ export const AD_ACCOUNTS = {
     cta:             "LEARN_MORE",
     location:        "Florida",
     label:           "Liquid Lawn Florida",
+    fallbackImageHash: "2310b876955b9ebbcf5d4adce07c733d",
   },
   georgia: {
     accountId:       "1467364857363196",
@@ -22,6 +23,7 @@ export const AD_ACCOUNTS = {
     cta:             "GET_OFFER_VIEW",
     location:        "Georgia",
     label:           "Liquid Lawn Georgia",
+    fallbackImageHash: "685c0408f252f3ead5e2aabde65e3735",
   },
 } as const;
 

@@ -346,14 +346,24 @@ export async function POST(req: Request) {
     if (falKey) {
       imageUrl     = await generateImage(adCopy.image_prompt, falKey);
       log.imageUrl = imageUrl;
-      // Upload to Facebook — non-fatal if token lacks ads_management
+      // Try uploading AI image to Facebook
       try {
         imageHash     = await uploadImageToFacebook(imageUrl, ctx.accountId, fbToken);
         log.imageHash = imageHash;
+        log.imageSource = "ai_generated";
       } catch (uploadErr) {
-        log.imageUploadError = String(uploadErr);
-        console.warn("[ad-launch] FB image upload failed:", uploadErr);
+        // Fall back to existing approved image hash — campaign still launches
+        imageHash = ctx.fallbackImageHash;
+        log.imageHash       = imageHash;
+        log.imageSource     = "fallback_existing";
+        log.imageUploadNote = "AI image generated but FB upload needs Advanced Access — used existing approved image. AI preview available in imageUrl.";
+        console.warn("[ad-launch] FB image upload failed, using fallback hash:", uploadErr);
       }
+    } else {
+      // No fal key — use fallback
+      imageHash = ctx.fallbackImageHash;
+      log.imageHash   = imageHash;
+      log.imageSource = "fallback_existing";
     }
 
     // Create campaign (starts PAUSED for review)
@@ -361,8 +371,6 @@ export async function POST(req: Request) {
       const campaign = await createFacebookCampaign(adCopy, imageHash, ctx, fbToken, videoId);
       log.campaign = campaign;
       log.status   = "created_paused";
-    } else if (isQualityGood(quality) && imageUrl && !imageHash) {
-      log.status = "ready_needs_fb_permission";
     } else {
       log.status = "quality_failed";
     }
