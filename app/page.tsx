@@ -320,6 +320,7 @@ export default function Home() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [uploadingAsset, setUploadingAsset] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Relative time ticker
@@ -598,18 +599,28 @@ export default function Home() {
     }
   }, []);
 
-  const uploadAsset = useCallback(async (file: File) => {
+  const uploadAsset = useCallback(async (files: File[]) => {
     setUploadingAsset(true);
+    setUploadError(null);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res  = await fetch("/api/assets", { method: "POST", body: form });
-      const data = await res.json();
-      if (!data.error) setAssets(prev => [data, ...prev]);
-    } catch { /* swallow */ } finally {
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        const res  = await fetch("/api/assets", { method: "POST", body: form });
+        const data = await res.json();
+        if (data.error) {
+          setUploadError(data.error);
+          break;
+        }
+      }
+      // Refetch to confirm everything is saved
+      await fetchAssets();
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
       setUploadingAsset(false);
     }
-  }, []);
+  }, [fetchAssets]);
 
   const deleteAsset = useCallback(async (name: string) => {
     setAssets(prev => prev.filter(a => a.name !== name));
@@ -1305,6 +1316,9 @@ export default function Home() {
                     )}
                     {uploadingAsset ? "Uploading…" : "Upload file"}
                   </button>
+                  {uploadError && (
+                    <p style={{ fontSize: 12, color: "#ef4444", marginTop: 4 }}>{uploadError}</p>
+                  )}
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -1313,7 +1327,7 @@ export default function Home() {
                     style={{ display: "none" }}
                     onChange={e => {
                       const files = Array.from(e.target.files ?? []);
-                      files.forEach(f => uploadAsset(f));
+                      if (files.length) uploadAsset(files);
                       e.target.value = "";
                     }}
                   />
@@ -1363,11 +1377,13 @@ export default function Home() {
                             <div style={{ height: 110, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
                               {a.type?.startsWith("image/")
                                 ? <img src={a.url} alt={a.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                : (
-                                  <svg width={28} height={28} fill="none" viewBox="0 0 24 24" stroke={C.textMuted} strokeWidth={1.5}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                                  </svg>
-                                )}
+                                : a.type?.startsWith("video/")
+                                  ? <video src={a.url} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline />
+                                  : (
+                                    <svg width={28} height={28} fill="none" viewBox="0 0 24 24" stroke={C.textMuted} strokeWidth={1.5}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                    </svg>
+                                  )}
                             </div>
                             {/* Info + delete */}
                             <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
