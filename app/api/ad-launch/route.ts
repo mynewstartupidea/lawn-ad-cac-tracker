@@ -232,6 +232,7 @@ async function createFacebookCampaign(
         custom_event_type: "LEAD",
       },
       daily_budget: 5000,
+      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
       targeting,
       status: "PAUSED",
       access_token: accessToken,
