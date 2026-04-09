@@ -298,7 +298,7 @@ export default function Home() {
   // Ad Management inner tab
   const [adTab, setAdTab] = useState<AdTab>("chat");
 
-  // AI Chat state
+  // Ad Management AI Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -310,6 +310,19 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [chatThinking, setChatThinking] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // CAC Dashboard AI Chat state
+  const [cacChatMessages, setCacChatMessages] = useState<ChatMessage[]>([
+    {
+      id: "cac-welcome",
+      role: "assistant",
+      text: "Hey! Ask me anything about your CAC data. Try: \"What's my best performing ad?\", \"How much did we spend last 7 days?\", or \"Which ad has the lowest CAC?\"",
+      ts: new Date(),
+    },
+  ]);
+  const [cacChatInput, setCacChatInput] = useState("");
+  const [cacChatThinking, setCacChatThinking] = useState(false);
+  const cacChatEndRef = useRef<HTMLDivElement>(null);
 
   // Campaigns state
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -335,6 +348,10 @@ export default function Home() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
+
+  useEffect(() => {
+    cacChatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [cacChatMessages]);
 
   // ── Fetch Supabase ──────────────────────────────────────────────────────────
 
@@ -553,6 +570,46 @@ export default function Home() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatMessages, assets]);
+
+  // ── CAC Chat handler ─────────────────────────────────────────────────────
+
+  const sendCacChat = useCallback(async (text: string) => {
+    if (!text.trim()) return;
+    const userMsg: ChatMessage = { id: Date.now().toString(), role: "user", text: text.trim(), ts: new Date() };
+    setCacChatMessages(prev => [...prev, userMsg]);
+    setCacChatInput("");
+    setCacChatThinking(true);
+    try {
+      const history = cacChatMessages
+        .filter(m => m.id !== "cac-welcome")
+        .map(m => ({ role: m.role, content: m.text }));
+      history.push({ role: "user", content: text.trim() });
+
+      const res  = await fetch("/api/cac-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history, dateRange }),
+      });
+      const data = await res.json();
+      const replyText = data.error ? `Error: ${data.error}` : (data.reply ?? "No response.");
+      setCacChatMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        text: replyText,
+        ts: new Date(),
+      }]);
+    } catch {
+      setCacChatMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        text: "Sorry, something went wrong. Please try again.",
+        ts: new Date(),
+      }]);
+    } finally {
+      setCacChatThinking(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacChatMessages, dateRange]);
 
   // ── Campaigns ─────────────────────────────────────────────────────────────
 
@@ -984,6 +1041,117 @@ export default function Home() {
                     {filteredLeads.length} of {rangeLeads.length} leads
                   </p>
                 )}
+              </div>
+            </section>
+
+            {/* ── CAC AI Chat ───────────────────────────────────────────── */}
+            <section>
+              <div style={{ marginBottom: 14 }}>
+                <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Ask AI About Your Data</h2>
+                <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
+                  Ask about CAC, best performing ads, spend, or sales for any time period
+                </p>
+              </div>
+
+              <div style={{
+                background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
+                boxShadow: C.shadow, display: "flex", flexDirection: "column", height: 420,
+              }}>
+                {/* Header */}
+                <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 8, background: C.purpleSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke={C.purple} strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>CAC Analyst</p>
+                    <p style={{ fontSize: 11, color: C.purple }}>● Reads your live Supabase + Facebook data</p>
+                  </div>
+                </div>
+
+                {/* Messages */}
+                <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+                  {cacChatMessages.map(msg => (
+                    <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                      <div style={{
+                        maxWidth: "82%",
+                        padding: "9px 13px",
+                        borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                        background: msg.role === "user" ? C.blue : C.bg,
+                        border: msg.role === "user" ? "none" : `1px solid ${C.border}`,
+                        color: msg.role === "user" ? "#fff" : C.text,
+                        fontSize: 13,
+                        lineHeight: 1.55,
+                      }}>
+                        {msg.text.split("\n").map((line, i) => (
+                          <span key={i}>{line}{i < msg.text.split("\n").length - 1 && <br />}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {cacChatThinking && (
+                    <div style={{ display: "flex", gap: 5, padding: "8px 12px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: "14px 14px 14px 4px", width: "fit-content" }}>
+                      {[0, 1, 2].map(i => (
+                        <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.purple, opacity: 0.6, animation: "bounce 1s ease-in-out infinite", animationDelay: `${i * 0.15}s` }} />
+                      ))}
+                    </div>
+                  )}
+                  <div ref={cacChatEndRef} />
+                </div>
+
+                {/* Suggested prompts */}
+                {cacChatMessages.length <= 1 && (
+                  <div style={{ padding: "0 14px 10px", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {[
+                      "Best performing ad this month",
+                      "What's my CAC last 7 days?",
+                      "How much did we spend vs sales?",
+                      "Which ad has the lowest CAC?",
+                    ].map(p => (
+                      <button key={p} onClick={() => sendCacChat(p)}
+                        style={{
+                          padding: "5px 11px", borderRadius: 20, fontSize: 12, fontWeight: 500,
+                          background: C.purpleSoft, color: C.purple, border: `1px solid ${C.purple}30`,
+                          cursor: "pointer",
+                        }}>
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Input */}
+                <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8 }}>
+                  <input
+                    type="text"
+                    value={cacChatInput}
+                    onChange={e => setCacChatInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendCacChat(cacChatInput); } }}
+                    placeholder="Ask about CAC, spend, best ads…"
+                    disabled={cacChatThinking}
+                    style={{
+                      flex: 1, padding: "9px 13px", borderRadius: 9, fontSize: 13,
+                      background: C.bg, border: `1px solid ${C.border}`, color: C.text, outline: "none",
+                      opacity: cacChatThinking ? 0.6 : 1,
+                    }}
+                  />
+                  <button
+                    onClick={() => sendCacChat(cacChatInput)}
+                    disabled={cacChatThinking || !cacChatInput.trim()}
+                    style={{
+                      padding: "9px 16px", borderRadius: 9, fontSize: 13, fontWeight: 600,
+                      background: cacChatThinking || !cacChatInput.trim() ? C.border : C.purple,
+                      color: cacChatThinking || !cacChatInput.trim() ? C.textMuted : "#fff",
+                      border: "none", cursor: cacChatThinking || !cacChatInput.trim() ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s",
+                    }}>
+                    {cacChatThinking ? <Spinner size={13} color={C.purple} /> : (
+                      <svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                      </svg>
+                    )}
+                    Ask
+                  </button>
+                </div>
               </div>
             </section>
           </>
