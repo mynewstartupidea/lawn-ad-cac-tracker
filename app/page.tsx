@@ -1818,10 +1818,14 @@ export default function Home() {
                   {/* Summary stat cards */}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
                     {([
-                      { label: "Total Calls",     value: eddmResponse.totalCalls.toLocaleString(),    icon: "📞", color: C.blue,   soft: C.blueSoft },
-                      { label: "Clients in SA",   value: eddmResponse.saClientsRead.toLocaleString(), icon: "👥", color: C.purple, soft: C.purpleSoft },
-                      { label: "Conversions",     value: eddmResponse.totalMatched.toLocaleString(),  icon: "✅", color: C.green,  soft: C.greenSoft },
-                      { label: "Overall CAC",     value: overallCAC ? eddmFmtMoney(overallCAC) : "Add spend ↓", icon: "💰", color: C.amber, soft: C.amberSoft },
+                      { label: "Total Calls",   value: eddmResponse.totalCalls.toLocaleString(),    icon: "📞", color: C.blue,   soft: C.blueSoft },
+                      { label: "Clients in SA", value: eddmResponse.saClientsRead.toLocaleString(), icon: "👥", color: C.purple, soft: C.purpleSoft },
+                      // Show paid-only conversions when spend is entered so the number is consistent with the
+                      // Overall CAC denominator. When no spend yet, show the full total.
+                      { label: totalSpend > 0 ? "Paid Conv." : "Conversions",
+                        value: totalSpend > 0 ? paidConversions.toLocaleString() : eddmResponse.totalMatched.toLocaleString(),
+                        icon: "✅", color: C.green, soft: C.greenSoft },
+                      { label: "Overall CAC", value: overallCAC ? eddmFmtMoney(overallCAC) : "Add spend ↓", icon: "💰", color: C.amber, soft: C.amberSoft },
                     ] as const).map(m => (
                       <div key={m.label} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "18px 16px", boxShadow: C.shadow, position: "relative", overflow: "hidden" }}>
                         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: m.color }} />
@@ -2040,9 +2044,9 @@ export default function Home() {
                 </span>
                 <div style={{ display: "flex", gap: 16 }}>
                   {[
-                    { label: "Total Spend", value: `$${totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-                    { label: "Conversions", value: eddmResponse.totalMatched.toString() },
-                    { label: "Overall CAC", value: overallCAC ? eddmFmtMoney(overallCAC) : "—" },
+                    { label: "Total Spend",  value: `$${totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+                    { label: "Paid Conv.",   value: paidConversions.toString() },
+                    { label: "Overall CAC",  value: overallCAC ? eddmFmtMoney(overallCAC) : "—" },
                   ].map(s => (
                     <div key={s.label}>
                       <p style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 2 }}>{s.label}</p>
@@ -2110,10 +2114,11 @@ export default function Home() {
                   {/* Summary strip */}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderBottom: `1px solid ${C.border}` }}>
                     {[
-                      { label: "Total Calls",   value: eddmResponse.totalCalls.toLocaleString(),    color: C.blue },
-                      { label: "Conversions",   value: eddmResponse.totalMatched.toLocaleString(),   color: C.green },
-                      { label: "Total Spend",   value: totalSpend > 0 ? `$${totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", color: C.purple },
-                      { label: "Overall CAC",   value: overallCAC ? eddmFmtMoney(overallCAC) : "—",  color: C.amber },
+                      { label: "Total Calls",  value: eddmResponse.totalCalls.toLocaleString(),    color: C.blue },
+                      // Paid Conv. = denominator used in Overall CAC — must match so user can verify the math
+                      { label: "Paid Conv.",   value: paidConversions.toLocaleString(),             color: C.green },
+                      { label: "Total Spend",  value: totalSpend > 0 ? `$${totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", color: C.purple },
+                      { label: "Overall CAC",  value: overallCAC ? eddmFmtMoney(overallCAC) : "—", color: C.amber },
                     ].map((s, i) => (
                       <div key={s.label} style={{
                         padding: "20px 24px",
@@ -2409,7 +2414,8 @@ export default function Home() {
                               const sp = parseFloat(eddmSpends[k] ?? "") || 0;
                               const cac = sp > 0 && f.conversions > 0 ? (sp / f.conversions).toFixed(2) : "";
                               const cr = f.totalCalls > 0 ? ((f.conversions / f.totalCalls) * 100).toFixed(1) : "0.0";
-                              return `"${f.flyerName}",${f.trackingNumber},${f.totalCalls},${f.conversions},${cr},${sp > 0 ? sp.toFixed(2) : ""},${cac}`;
+                              const safeName = f.flyerName.replace(/"/g, '""');
+                              return `"${safeName}",${f.trackingNumber},${f.totalCalls},${f.conversions},${cr},${sp > 0 ? sp.toFixed(2) : ""},${cac}`;
                             }).join("\n");
                           } else if (eddmReportTab === "flyer-zip") {
                             csv = "Flyer Name,Tracking Number,Zip Code,Clients,% of Flyer,Allocated Spend,Zip CAC";
@@ -2421,7 +2427,8 @@ export default function Home() {
                               for (const [z, cnt] of Array.from(zipMap.entries()).sort((a, b) => b[1] - a[1])) {
                                 const alloc = spend * (cnt / flyer.conversions);
                                 const zCac  = alloc / cnt;
-                                csv += `\n"${flyer.flyerName}",${flyer.trackingNumber},${z},${cnt},${((cnt / flyer.conversions) * 100).toFixed(1)},${alloc.toFixed(2)},${zCac.toFixed(2)}`;
+                                const safeName = flyer.flyerName.replace(/"/g, '""');
+                                csv += `\n"${safeName}",${flyer.trackingNumber},${z},${cnt},${((cnt / flyer.conversions) * 100).toFixed(1)},${alloc.toFixed(2)},${zCac.toFixed(2)}`;
                               }
                             }
                           } else {
@@ -2446,7 +2453,8 @@ export default function Home() {
                               const clients = zipClientEvents.get(z) ?? 0;
                               const flyers  = zipFlyers.get(z)?.size ?? 0;
                               const names   = Array.from(zipFlyers.get(z) ?? []).join("; ");
-                              csv += `\n${z},${clients},${flyers},${alloc.toFixed(2)},${(alloc / clients).toFixed(2)},"${names}"`;
+                              const safeNames = names.replace(/"/g, '""');
+                              csv += `\n${z},${clients},${flyers},${alloc.toFixed(2)},${(alloc / clients).toFixed(2)},"${safeNames}"`;
                             }
                           }
                           const blob = new Blob([csv], { type: "text/csv" });
