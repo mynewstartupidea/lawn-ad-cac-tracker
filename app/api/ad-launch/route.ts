@@ -55,7 +55,7 @@ Rules:
 - The exact offer price (${ctx.offerShort}) MUST appear in the primary text
 - Headline should be under 40 characters, punchy and curiosity-driven
 - Primary text should have a strong hook in the first line, then a pain point, then the solution, then the offer, then urgency
-- image_prompt: describe a realistic photo of a beautiful healthy green lawn in ${ctx.location} for a Facebook ad
+- image_prompt: describe a specific scene for a photorealistic lawn photo — include the type of grass, time of day, angle, what the yard looks like (e.g. "front yard of a beige stucco Florida home, thick green St. Augustine grass, sprinkler mist catching morning light, palm trees in background, wide shot from street level"). Be specific and cinematic. No people, no text.
 - ad_name format: "AI Ad ${today} - [short descriptor]"
 
 Return ONLY valid JSON with exactly these fields:
@@ -140,26 +140,37 @@ Ad Name: ${adCopy.ad_name}`,
   return JSON.parse(res.choices[0].message.content ?? "{}") as QualityResult;
 }
 
-// ─── fal.ai Image Generation ──────────────────────────────────────────────────
+// ─── Image quality selection ──────────────────────────────────────────────────
 
-async function generateImage(prompt: string, falKey: string): Promise<string> {
-  const res = await fetch("https://fal.run/fal-ai/flux/schnell", {
-    method: "POST",
-    headers: {
-      Authorization: `Key ${falKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      prompt: `${prompt}. Professional real estate style photography, bright natural sunlight, lush healthy green grass, high resolution, Facebook ad, no text overlays.`,
-      image_size: "landscape_16_9",
-      num_images: 1,
-      num_inference_steps: 4,
-    }),
+const HIGH_QUALITY_KEYWORDS = ["premium", "best", "launch", "hero", "flagship", "high quality", "top", "featured"];
+
+function selectImageQuality(quality: QualityResult, instruction: string): "medium" | "high" {
+  const isHighIntent = HIGH_QUALITY_KEYWORDS.some(kw => instruction.toLowerCase().includes(kw));
+  const isExceptionalCopy = quality.score >= 9;
+  return isHighIntent || isExceptionalCopy ? "high" : "medium";
+}
+
+// ─── gpt-image-1 Image Generation ────────────────────────────────────────────
+
+async function generateImage(
+  prompt: string,
+  openai: OpenAI,
+  imageQuality: "medium" | "high"
+): Promise<string> {
+  const enhancedPrompt = `${prompt}. DSLR photography, Canon 5D, 85mm lens, golden hour soft warm sunlight, perfectly manicured thick lush emerald green St. Augustine grass, healthy uniform lawn, suburban home curb appeal, no people, no text, no watermarks, no logos, photorealistic, sharp focus, square 1:1 composition`;
+
+  const response = await openai.images.generate({
+    model: "gpt-image-1",
+    prompt: enhancedPrompt,
+    size: "1024x1024",
+    quality: imageQuality,
+    n: 1,
   });
 
-  const data = await res.json();
-  if (!data.images?.[0]?.url) throw new Error(`fal.ai error: ${JSON.stringify(data)}`);
-  return data.images[0].url as string;
+  const image = response.data[0];
+  if (image.url) return image.url;
+  if (image.b64_json) return `data:image/png;base64,${image.b64_json}`;
+  throw new Error("gpt-image-1: no image returned");
 }
 
 // ─── Upload image hash to Facebook ───────────────────────────────────────────
@@ -169,10 +180,16 @@ async function uploadImageToFacebook(
   accountId: string,
   accessToken: string
 ): Promise<string> {
+  // Handle base64 data URLs from gpt-image-1
+  const isBase64 = imageUrl.startsWith("data:");
+  const body = isBase64
+    ? JSON.stringify({ bytes: imageUrl.split(",")[1], access_token: accessToken })
+    : JSON.stringify({ url: imageUrl, access_token: accessToken });
+
   const res = await fetch(`${FB_BASE}/act_${accountId}/adimages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: imageUrl, access_token: accessToken }),
+    body,
   });
   const data = await res.json();
   if (data.error) throw new Error(`FB image upload: ${data.error.message}`);
@@ -335,7 +352,6 @@ async function createFacebookCampaign(
 export async function POST(req: Request) {
   const openaiKey = process.env.OPENAI_API_KEY;
   const fbToken   = process.env.FACEBOOK_ACCESS_TOKEN;
-  const falKey    = process.env.FAL_API_KEY;
 
   if (!openaiKey) return NextResponse.json({ error: "OPENAI_API_KEY not configured" }, { status: 400 });
   if (!fbToken)   return NextResponse.json({ error: "FACEBOOK_ACCESS_TOKEN not configured" }, { status: 400 });
@@ -377,11 +393,14 @@ export async function POST(req: Request) {
     log.finalQuality = quality;
     log.qualityGood  = isQualityGood(quality);
 
-    // Generate image
+    // Generate image via gpt-image-1 — quality auto-selected based on copy score + instruction
+    const imageQuality = selectImageQuality(quality, instruction);
+    log.imageQuality = imageQuality;
+
     let imageUrl  = "";
     let imageHash = "";
-    if (falKey) {
-      imageUrl     = await generateImage(adCopy.image_prompt, falKey);
+    try {
+      imageUrl     = await generateImage(adCopy.image_prompt, openai, imageQuality);
       log.imageUrl = imageUrl;
       // Try uploading AI image to Facebook
       try {
@@ -396,11 +415,13 @@ export async function POST(req: Request) {
         log.imageUploadNote = "AI image generated but FB upload needs Advanced Access — used existing approved image. AI preview available in imageUrl.";
         console.warn("[ad-launch] FB image upload failed, using fallback hash:", uploadErr);
       }
-    } else {
-      // No fal key — use fallback
+    } catch (imgErr) {
+      // Image generation failed — use fallback and continue
       imageHash = ctx.fallbackImageHash;
       log.imageHash   = imageHash;
       log.imageSource = "fallback_existing";
+      log.imageError  = String(imgErr);
+      console.warn("[ad-launch] Image generation failed, using fallback hash:", imgErr);
     }
 
     // Create campaign (starts PAUSED for review)
