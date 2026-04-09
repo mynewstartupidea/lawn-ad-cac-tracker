@@ -528,6 +528,7 @@ export default function Home() {
         body: JSON.stringify({
           messages: history,
           assets: assets.map(a => ({ name: a.name })),
+          account: account === "all" ? "all" : account,
         }),
       });
       const data = await res.json();
