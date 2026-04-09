@@ -27,11 +27,25 @@ function col(row: Record<string, unknown>, ...candidates: string[]): string {
 }
 
 // ─── Parse any file buffer into row objects ────────────────────────────────────
-// Works for .xlsx, .xls, and .csv — xlsx library handles all three
+// Works for .xlsx, .xls, and .csv — xlsx library handles all three.
+// For multi-sheet workbooks (e.g. CallRail exports with a cover sheet + data sheet),
+// picks the sheet with the most rows rather than blindly taking the first one.
 function parseBuffer(buffer: ArrayBuffer): Record<string, unknown>[] {
   const wb = XLSX.read(buffer, { type: "array", cellDates: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+
+  let bestSheet = wb.Sheets[wb.SheetNames[0]];
+  let bestCount = 0;
+
+  for (const name of wb.SheetNames) {
+    const ws   = wb.Sheets[name];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+    if (rows.length > bestCount) {
+      bestCount = rows.length;
+      bestSheet = ws;
+    }
+  }
+
+  return XLSX.utils.sheet_to_json<Record<string, unknown>>(bestSheet, { defval: "" });
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
