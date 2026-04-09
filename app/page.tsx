@@ -525,6 +525,15 @@ export default function Home() {
   const [eddmExpanded,     setEddmExpanded]     = useState<Set<string>>(new Set());
   const [eddmSpends,       setEddmSpends]       = useState<Record<string, string>>({});
   const [eddmReportOpen,   setEddmReportOpen]   = useState(false);
+  const [eddmChatOpen,     setEddmChatOpen]     = useState(false);
+  const [eddmChatMessages, setEddmChatMessages] = useState<{ id: string; role: "user" | "assistant"; content: string; image?: string; ts: Date }[]>([
+    { id: "eddm-welcome", role: "assistant", content: "Hi! Paste your flyer spend data, describe it, or attach a screenshot and I'll fill in the amounts automatically. You can also say things like \"set spend for 478-217-7161 to $2500\" or \"remove spend for the Georgia flyer\".", ts: new Date() },
+  ]);
+  const [eddmChatInput,   setEddmChatInput]   = useState("");
+  const [eddmChatImg,     setEddmChatImg]     = useState<string | null>(null);
+  const [eddmChatBusy,    setEddmChatBusy]    = useState(false);
+  const eddmChatEndRef = useRef<HTMLDivElement>(null);
+  const eddmImgInputRef = useRef<HTMLInputElement>(null);
 
   // Relative time ticker
   useEffect(() => {
@@ -2128,6 +2137,227 @@ export default function Home() {
                 </div>
               </div>
             )}
+          </>
+        );
+      })()}
+
+      {/* ── EDDM Spend Assistant FAB + Panel ────────────────────────────── */}
+      {tab === "eddm" && eddmResponse && (() => {
+        async function sendEddmChat(text: string, img?: string | null) {
+          const trimmed = text.trim();
+          if (!trimmed && !img) return;
+
+          const userMsg = { id: Date.now().toString(), role: "user" as const, content: trimmed, image: img ?? undefined, ts: new Date() };
+          setEddmChatMessages(p => [...p, userMsg]);
+          setEddmChatInput("");
+          setEddmChatImg(null);
+          setEddmChatBusy(true);
+
+          try {
+            const history = [...eddmChatMessages, userMsg].slice(-12).map(m => ({
+              role: m.role, content: m.content, image: m.image,
+            }));
+
+            const res  = await fetch("/api/eddm-chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ messages: history, flyers: eddmResponse!.results }),
+            });
+            const data = await res.json() as { reply: string; spendUpdates: Record<string, number> };
+
+            // Apply spend updates — match by tracking number digits
+            if (data.spendUpdates && Object.keys(data.spendUpdates).length > 0) {
+              setEddmSpends(prev => {
+                const next = { ...prev };
+                for (const [rawNum, amount] of Object.entries(data.spendUpdates)) {
+                  const digits = rawNum.replace(/\D/g, "");
+                  const flyer = eddmResponse!.results.find(f => f.trackingNumber.replace(/\D/g, "") === digits);
+                  if (flyer) {
+                    const key = flyer.flyerName + flyer.trackingNumber;
+                    next[key] = amount > 0 ? String(amount) : "";
+                  }
+                }
+                return next;
+              });
+            }
+
+            setEddmChatMessages(p => [...p, { id: Date.now().toString() + "r", role: "assistant", content: data.reply, ts: new Date() }]);
+          } catch {
+            setEddmChatMessages(p => [...p, { id: Date.now().toString() + "e", role: "assistant", content: "Something went wrong. Please try again.", ts: new Date() }]);
+          } finally {
+            setEddmChatBusy(false);
+            setTimeout(() => eddmChatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
+          }
+        }
+
+        function handleEddmPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+          const items = e.clipboardData.items;
+          for (const item of Array.from(items)) {
+            if (item.type.startsWith("image/")) {
+              e.preventDefault();
+              const file = item.getAsFile();
+              if (!file) continue;
+              const reader = new FileReader();
+              reader.onload = ev => setEddmChatImg(ev.target?.result as string);
+              reader.readAsDataURL(file);
+              return;
+            }
+          }
+        }
+
+        function handleEddmImgFile(e: React.ChangeEvent<HTMLInputElement>) {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = ev => setEddmChatImg(ev.target?.result as string);
+          reader.readAsDataURL(file);
+          e.target.value = "";
+        }
+
+        return (
+          <>
+            {/* FAB */}
+            <button
+              onClick={() => setEddmChatOpen(o => !o)}
+              title="Spend Assistant"
+              style={{
+                position: "fixed", bottom: 28, right: 28, zIndex: 50,
+                width: 52, height: 52, borderRadius: "50%",
+                background: "linear-gradient(135deg, #0891b2, #0e7490)",
+                border: "none", cursor: "pointer",
+                boxShadow: "0 4px 20px rgba(8,145,178,0.45)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "transform 0.2s, box-shadow 0.2s",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1.08)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+            >
+              {eddmChatOpen
+                ? <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                : <svg width={20} height={20} fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              }
+            </button>
+
+            {/* Tooltip */}
+            {!eddmChatOpen && (
+              <div style={{
+                position: "fixed", bottom: 36, right: 90, zIndex: 50,
+                background: "#0f172a", color: "#fff", fontSize: 12, fontWeight: 500,
+                padding: "6px 12px", borderRadius: 8, whiteSpace: "nowrap",
+                pointerEvents: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+              }}>
+                Spend Assistant
+                <span style={{ position: "absolute", right: -5, top: "50%", transform: "translateY(-50%)", borderTop: "5px solid transparent", borderBottom: "5px solid transparent", borderLeft: "5px solid #0f172a" }} />
+              </div>
+            )}
+
+            {/* Chat panel */}
+            <div style={{
+              position: "fixed", bottom: 90, right: 28, zIndex: 49,
+              width: 380, maxHeight: "calc(100vh - 130px)",
+              background: C.card, border: `1px solid ${C.border}`,
+              borderRadius: 18,
+              boxShadow: "0 8px 40px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.08)",
+              display: "flex", flexDirection: "column", overflow: "hidden",
+              transition: "opacity 0.2s, transform 0.2s",
+              opacity: eddmChatOpen ? 1 : 0,
+              transform: eddmChatOpen ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+              pointerEvents: eddmChatOpen ? "all" : "none",
+            }}>
+              {/* Header */}
+              <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, background: "linear-gradient(135deg, #0891b2, #0e7490)", display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>💰</div>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Spend Assistant</p>
+                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.65)" }}>Paste data or attach a screenshot</p>
+                </div>
+              </div>
+
+              {/* Messages */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
+                {eddmChatMessages.map(m => (
+                  <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: m.role === "user" ? "flex-end" : "flex-start", gap: 4 }}>
+                    {m.image && (
+                      <img src={m.image} alt="attachment" style={{ maxWidth: 220, borderRadius: 10, border: `1px solid ${C.border}` }} />
+                    )}
+                    <div style={{
+                      maxWidth: "85%", padding: "9px 13px", borderRadius: m.role === "user" ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
+                      background: m.role === "user" ? "linear-gradient(135deg, #0891b2, #0e7490)" : C.bg,
+                      color: m.role === "user" ? "#fff" : C.text,
+                      fontSize: 13, lineHeight: 1.5,
+                      border: m.role === "assistant" ? `1px solid ${C.border}` : "none",
+                    }}>
+                      {m.content}
+                    </div>
+                  </div>
+                ))}
+                {eddmChatBusy && (
+                  <div style={{ display: "flex", alignItems: "flex-start" }}>
+                    <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: "14px 14px 14px 2px", padding: "9px 14px", display: "flex", gap: 4, alignItems: "center" }}>
+                      {[0,1,2].map(i => (
+                        <span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.textMuted, display: "inline-block", animation: `bounce 1.2s ease-in-out ${i * 0.2}s infinite` }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div ref={eddmChatEndRef} />
+              </div>
+
+              {/* Image preview */}
+              {eddmChatImg && (
+                <div style={{ padding: "8px 12px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                  <img src={eddmChatImg} alt="preview" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}` }} />
+                  <button onClick={() => setEddmChatImg(null)} style={{ fontSize: 11, color: C.red, background: C.redSoft, border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontWeight: 600 }}>Remove</button>
+                  <span style={{ fontSize: 11, color: C.textMuted }}>Image ready to send</span>
+                </div>
+              )}
+
+              {/* Input */}
+              <div style={{ padding: "10px 12px", borderTop: `1px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
+                <textarea
+                  rows={2}
+                  value={eddmChatInput}
+                  onChange={e => setEddmChatInput(e.target.value)}
+                  onPaste={handleEddmPaste}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendEddmChat(eddmChatInput, eddmChatImg); } }}
+                  placeholder="Paste spend data, describe amounts, or press Ctrl+V to paste a screenshot…"
+                  disabled={eddmChatBusy}
+                  style={{
+                    width: "100%", resize: "none", border: `1px solid ${C.border}`,
+                    borderRadius: 10, padding: "9px 12px", fontSize: 13,
+                    color: C.text, background: C.bg, outline: "none",
+                    lineHeight: 1.5, fontFamily: "inherit",
+                    opacity: eddmChatBusy ? 0.6 : 1,
+                  }}
+                />
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {/* Image attach */}
+                  <button
+                    onClick={() => eddmImgInputRef.current?.click()}
+                    title="Attach screenshot"
+                    style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                  >
+                    <svg width={15} height={15} fill="none" viewBox="0 0 24 24" stroke={C.textSec} strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+                  <input ref={eddmImgInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleEddmImgFile} />
+
+                  <p style={{ flex: 1, fontSize: 10, color: C.textMuted }}>Enter to send · Shift+Enter for newline · Ctrl+V to paste image</p>
+
+                  <button
+                    onClick={() => sendEddmChat(eddmChatInput, eddmChatImg)}
+                    disabled={eddmChatBusy || (!eddmChatInput.trim() && !eddmChatImg)}
+                    style={{
+                      background: (eddmChatBusy || (!eddmChatInput.trim() && !eddmChatImg)) ? "#e2e8f0" : "linear-gradient(135deg, #0891b2, #0e7490)",
+                      color: (eddmChatBusy || (!eddmChatInput.trim() && !eddmChatImg)) ? C.textMuted : "#fff",
+                      border: "none", borderRadius: 8, padding: "6px 14px",
+                      fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0,
+                    }}
+                  >Send</button>
+                </div>
+              </div>
+            </div>
           </>
         );
       })()}
