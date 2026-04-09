@@ -56,6 +56,7 @@ interface SAClient {
   workPhone: string;
   cellPhone: string;
   address: string;
+  zip: string;             // 5-digit zip extracted from PhysicalZ column
 }
 
 interface FlyerResult {
@@ -109,10 +110,14 @@ export async function POST(req: Request) {
       const workPhone = normalizePhone(col(row, "WorkPhone", "Work Phone", "work_phone"));
       const cellPhone = normalizePhone(col(row, "CellPhone", "Cell Phone", "cell_phone", "Mobile", "MobilePhone"));
 
+      const rawZip   = col(row, "PhysicalZ", "Physical Zip", "Zip", "ZipCode", "PostalCode");
+      const zipDigits = rawZip.replace(/\D/g, "").slice(0, 5);
+      const zip = zipDigits.length >= 3 ? zipDigits.padStart(5, "0") : "";
+
       const address = [
         col(row, "PhysicalS", "Physical Street", "Street", "Address"),
         col(row, "PhysicalC", "Physical City",   "City"),
-        col(row, "PhysicalZ", "Physical Zip",    "Zip", "ZipCode"),
+        rawZip,
       ].filter(Boolean).join(", ");
 
       // Collect all valid phones for this client (cell first = highest priority)
@@ -130,6 +135,7 @@ export async function POST(req: Request) {
           workPhone,
           cellPhone,
           address,
+          zip,
         });
       }
 

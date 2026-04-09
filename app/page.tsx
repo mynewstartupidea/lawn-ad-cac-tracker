@@ -280,6 +280,7 @@ interface EddmClient {
   workPhone: string;
   cellPhone: string;
   address: string;
+  zip: string;
 }
 
 interface EddmFlyer {
@@ -525,6 +526,8 @@ export default function Home() {
   const [eddmExpanded,     setEddmExpanded]     = useState<Set<string>>(new Set());
   const [eddmSpends,       setEddmSpends]       = useState<Record<string, string>>({});
   const [eddmReportOpen,   setEddmReportOpen]   = useState(false);
+  const [eddmShowZip,      setEddmShowZip]      = useState(false);
+  const [eddmReportTab,    setEddmReportTab]    = useState<"flyer" | "flyer-zip" | "overall-zip">("flyer");
   const [eddmChatOpen,     setEddmChatOpen]     = useState(false);
   const [eddmChatMessages, setEddmChatMessages] = useState<{ id: string; role: "user" | "assistant"; content: string; image?: string; ts: Date }[]>([
     { id: "eddm-welcome", role: "assistant", content: "Hi! Paste your flyer spend data, describe it, or attach a screenshot and I'll fill in the amounts automatically. You can also say things like \"set spend for 478-217-7161 to $2500\" or \"remove spend for the Georgia flyer\".", ts: new Date() },
@@ -1831,9 +1834,28 @@ export default function Home() {
 
                   {/* Flyer cards */}
                   <div>
-                    <p style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>
-                      Results by Flyer &nbsp;<span style={{ fontWeight: 400, color: C.textMuted }}>— sorted by conversions</span>
-                    </p>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                        Results by Flyer &nbsp;<span style={{ fontWeight: 400, color: C.textMuted }}>— sorted by conversions</span>
+                      </p>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                        <div
+                          onClick={() => setEddmShowZip(p => !p)}
+                          style={{
+                            width: 36, height: 20, borderRadius: 10,
+                            background: eddmShowZip ? C.blue : C.border,
+                            position: "relative", transition: "background 0.2s", cursor: "pointer", flexShrink: 0,
+                          }}
+                        >
+                          <div style={{
+                            position: "absolute", top: 3, left: eddmShowZip ? 19 : 3,
+                            width: 14, height: 14, borderRadius: 7, background: "#fff",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left 0.2s",
+                          }} />
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: eddmShowZip ? C.blue : C.textSec }}>Zip Code View</span>
+                      </label>
+                    </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       {eddmResponse.results.map(flyer => {
                         const key      = flyer.flyerName + "||" + flyer.trackingNumber;
@@ -1895,29 +1917,81 @@ export default function Home() {
 
                             {/* Expanded client table */}
                             {isOpen && flyer.matchedClients.length > 0 && (
-                              <div style={{ borderTop: `1px solid ${C.border}`, overflowX: "auto" }}>
-                                <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
-                                  <thead>
-                                    <tr style={{ background: "#f8fafc" }}>
-                                      {["#", "Name", "Matched Phone", "Cell", "Home", "Work", "Address"].map(h => (
-                                        <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMuted, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {flyer.matchedClients.map((client, i) => (
-                                      <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                                        <td style={{ padding: "9px 16px", color: C.textMuted, fontWeight: 600 }}>{i + 1}</td>
-                                        <td style={{ padding: "9px 16px", fontWeight: 600, color: C.text, whiteSpace: "nowrap" }}>{client.name}</td>
-                                        <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.blue }}>{eddmFmtPhone(client.matchedPhone)}</td>
-                                        <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.cellPhone ? eddmFmtPhone(client.cellPhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
-                                        <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.homePhone ? eddmFmtPhone(client.homePhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
-                                        <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.workPhone ? eddmFmtPhone(client.workPhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
-                                        <td style={{ padding: "9px 16px", color: C.textSec, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{client.address || <span style={{ color: C.textMuted }}>—</span>}</td>
+                              <div style={{ borderTop: `1px solid ${C.border}` }}>
+                                {/* Zip breakdown (only when toggle is on and flyer has spend) */}
+                                {eddmShowZip && spend > 0 && (() => {
+                                  const zipMap = new Map<string, number>();
+                                  for (const c of flyer.matchedClients) {
+                                    const z = c.zip || "Unknown";
+                                    zipMap.set(z, (zipMap.get(z) ?? 0) + 1);
+                                  }
+                                  const zipRows = Array.from(zipMap.entries())
+                                    .sort((a, b) => b[1] - a[1]);
+                                  return (
+                                    <div style={{ padding: "14px 20px", background: "#f0f9ff", borderBottom: `1px solid #bae6fd` }}>
+                                      <p style={{ fontSize: 11, fontWeight: 700, color: "#0369a1", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
+                                        Zip Code Breakdown — Allocated Spend: ${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </p>
+                                      <div style={{ overflowX: "auto" }}>
+                                        <table style={{ fontSize: 12, borderCollapse: "collapse", minWidth: 480 }}>
+                                          <thead>
+                                            <tr>
+                                              {["Zip Code", "Clients", "% of Flyer", "Allocated Spend", "CAC (this zip)"].map(h => (
+                                                <th key={h} style={{ padding: "6px 14px", textAlign: h === "Zip Code" ? "left" : "center", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#0369a1", borderBottom: "1px solid #bae6fd", whiteSpace: "nowrap" }}>{h}</th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {zipRows.map(([z, cnt]) => {
+                                              const pct     = ((cnt / flyer.conversions) * 100).toFixed(1);
+                                              const alloc   = spend * (cnt / flyer.conversions);
+                                              const zipCac  = alloc / cnt;
+                                              return (
+                                                <tr key={z} style={{ borderBottom: "1px solid #e0f2fe" }}>
+                                                  <td style={{ padding: "7px 14px", fontWeight: 700, color: "#0369a1", fontFamily: "monospace" }}>{z}</td>
+                                                  <td style={{ padding: "7px 14px", textAlign: "center", color: C.text, fontWeight: 600 }}>{cnt}</td>
+                                                  <td style={{ padding: "7px 14px", textAlign: "center", color: C.textSec }}>{pct}%</td>
+                                                  <td style={{ padding: "7px 14px", textAlign: "center", color: C.purple, fontWeight: 600 }}>${alloc.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                                  <td style={{ padding: "7px 14px", textAlign: "center" }}>
+                                                    <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: zipCac < 100 ? C.greenSoft : zipCac < 300 ? C.amberSoft : C.redSoft, color: zipCac < 100 ? C.green : zipCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zipCac)}</span>
+                                                  </td>
+                                                </tr>
+                                              );
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+
+                                <div style={{ overflowX: "auto" }}>
+                                  <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                                    <thead>
+                                      <tr style={{ background: "#f8fafc" }}>
+                                        {["#", "Name", "Matched Phone", "Cell", "Home", "Work", ...(eddmShowZip ? ["Zip"] : []), "Address"].map(h => (
+                                          <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMuted, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                                        ))}
                                       </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                                    </thead>
+                                    <tbody>
+                                      {flyer.matchedClients.map((client, i) => (
+                                        <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                          <td style={{ padding: "9px 16px", color: C.textMuted, fontWeight: 600 }}>{i + 1}</td>
+                                          <td style={{ padding: "9px 16px", fontWeight: 600, color: C.text, whiteSpace: "nowrap" }}>{client.name}</td>
+                                          <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.blue }}>{eddmFmtPhone(client.matchedPhone)}</td>
+                                          <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.cellPhone ? eddmFmtPhone(client.cellPhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
+                                          <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.homePhone ? eddmFmtPhone(client.homePhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
+                                          <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.workPhone ? eddmFmtPhone(client.workPhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
+                                          {eddmShowZip && (
+                                            <td style={{ padding: "9px 16px", fontFamily: "monospace", fontWeight: 600, color: "#0369a1" }}>{client.zip || <span style={{ color: C.textMuted }}>—</span>}</td>
+                                          )}
+                                          <td style={{ padding: "9px 16px", color: C.textSec, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{client.address || <span style={{ color: C.textMuted }}>—</span>}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
                               </div>
                             )}
                           </div>
@@ -2051,19 +2125,46 @@ export default function Home() {
                     ))}
                   </div>
 
+                  {/* Tab navigation */}
+                  {(() => {
+                    const tabs: { id: "flyer" | "flyer-zip" | "overall-zip"; label: string; icon: string }[] = [
+                      { id: "flyer",       label: "Flyer Summary",    icon: "📋" },
+                      { id: "flyer-zip",   label: "Per Flyer × Zip",  icon: "📌" },
+                      { id: "overall-zip", label: "Overall Zip CAC",  icon: "🗺️" },
+                    ];
+                    return (
+                      <div style={{ display: "flex", gap: 0, borderBottom: `2px solid ${C.border}`, padding: "0 32px", background: "#fafafa" }}>
+                        {tabs.map(t => (
+                          <button
+                            key={t.id}
+                            onClick={() => setEddmReportTab(t.id)}
+                            style={{
+                              padding: "14px 20px", fontSize: 13, fontWeight: 600,
+                              border: "none", borderBottom: eddmReportTab === t.id ? `2px solid ${C.blue}` : "2px solid transparent",
+                              background: "none", cursor: "pointer",
+                              color: eddmReportTab === t.id ? C.blue : C.textSec,
+                              display: "flex", alignItems: "center", gap: 6,
+                              marginBottom: -2, transition: "color 0.15s",
+                            }}
+                          >
+                            <span>{t.icon}</span> {t.label}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
                   {/* CAC formula callout */}
-                  <div style={{ padding: "16px 32px", background: C.purpleSoft, borderBottom: `1px solid #e9d5ff` }}>
+                  <div style={{ padding: "12px 32px", background: C.purpleSoft, borderBottom: `1px solid #e9d5ff` }}>
                     <p style={{ fontSize: 12, color: C.purple, fontWeight: 600 }}>
-                      CAC Formula: &nbsp;
-                      <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>
-                        Ad Spend ÷ Number of Clients
-                      </span>
-                      &nbsp;— Flyers without spend show "—" and are still included in the report.
+                      {eddmReportTab === "flyer" && <>CAC Formula: <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>Ad Spend ÷ Clients</span> — Flyers without spend show "—" and are still included.</>}
+                      {eddmReportTab === "flyer-zip" && <>Zip allocation: <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>Flyer Spend × (Zip Clients ÷ Flyer Clients)</span> — only paid flyers shown.</>}
+                      {eddmReportTab === "overall-zip" && <>Overall zip CAC = <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>Σ allocated spend ÷ Σ paid client events</span> across all paid flyers.</>}
                     </p>
                   </div>
 
-                  {/* Report table — spend rows first, no-spend (profiles) at bottom */}
-                  {(() => {
+                  {/* ── Tab: Flyer Summary ──────────────────────────────────────────── */}
+                  {eddmReportTab === "flyer" && (() => {
                     const withSpend    = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0);
                     const withoutSpend = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) === 0);
 
@@ -2075,42 +2176,24 @@ export default function Home() {
 
                       return (
                         <tr key={key} style={{ borderBottom: `1px solid ${C.border}`, background: dimmed ? "#fafafa" : i % 2 === 0 ? "#fff" : "#f8fafc", opacity: dimmed ? 0.75 : 1 }}>
-                          <td style={{ padding: "14px 20px", fontWeight: 600, color: dimmed ? C.textSec : C.text, maxWidth: 220 }}>
-                            {flyer.flyerName || "Unknown"}
-                          </td>
-                          <td style={{ padding: "14px 20px", fontFamily: "monospace", fontSize: 12, color: C.textSec }}>
-                            {eddmFmtPhone(flyer.trackingNumber)}
-                          </td>
-                          <td style={{ padding: "14px 20px", textAlign: "center", color: C.blue, fontWeight: 600 }}>
-                            {flyer.totalCalls.toLocaleString()}
-                          </td>
+                          <td style={{ padding: "14px 20px", fontWeight: 600, color: dimmed ? C.textSec : C.text, maxWidth: 220 }}>{flyer.flyerName || "Unknown"}</td>
+                          <td style={{ padding: "14px 20px", fontFamily: "monospace", fontSize: 12, color: C.textSec }}>{eddmFmtPhone(flyer.trackingNumber)}</td>
+                          <td style={{ padding: "14px 20px", textAlign: "center", color: C.blue, fontWeight: 600 }}>{flyer.totalCalls.toLocaleString()}</td>
                           <td style={{ padding: "14px 20px", textAlign: "center" }}>
-                            <span style={{
-                              display: "inline-block", padding: "3px 12px", borderRadius: 20,
-                              fontSize: 12, fontWeight: 700,
-                              background: flyer.conversions > 0 ? C.greenSoft : "#f1f5f9",
-                              color: flyer.conversions > 0 ? C.green : C.textMuted,
-                            }}>{flyer.conversions}</span>
+                            <span style={{ display: "inline-block", padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: flyer.conversions > 0 ? C.greenSoft : "#f1f5f9", color: flyer.conversions > 0 ? C.green : C.textMuted }}>{flyer.conversions}</span>
                           </td>
-                          <td style={{ padding: "14px 20px", textAlign: "center", color: C.textSec, fontSize: 12 }}>
-                            {convRate}%
-                          </td>
+                          <td style={{ padding: "14px 20px", textAlign: "center", color: C.textSec, fontSize: 12 }}>{convRate}%</td>
                           <td style={{ padding: "14px 20px", textAlign: "center", fontWeight: 600 }}>
-                            {spend > 0
-                              ? <span style={{ color: C.purple }}>${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                              : <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>}
+                            {spend > 0 ? <span style={{ color: C.purple }}>${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> : <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>}
                           </td>
                           <td style={{ padding: "14px 20px", textAlign: "center" }}>
-                            {cac !== null
-                              ? <span style={{ display: "inline-block", padding: "4px 14px", borderRadius: 20, fontSize: 13, fontWeight: 800, background: cac < 100 ? C.greenSoft : cac < 300 ? C.amberSoft : C.redSoft, color: cac < 100 ? C.green : cac < 300 ? C.amber : C.red }}>{eddmFmtMoney(cac)}</span>
-                              : <span style={{ color: C.textMuted }}>—</span>}
+                            {cac !== null ? <span style={{ display: "inline-block", padding: "4px 14px", borderRadius: 20, fontSize: 13, fontWeight: 800, background: cac < 100 ? C.greenSoft : cac < 300 ? C.amberSoft : C.redSoft, color: cac < 100 ? C.green : cac < 300 ? C.amber : C.red }}>{eddmFmtMoney(cac)}</span> : <span style={{ color: C.textMuted }}>—</span>}
                           </td>
                         </tr>
                       );
                     };
 
                     const cols = ["Flyer Name", "Tracking Number", "Total Calls", "Conversions", "Conv. Rate", "Ad Spend", "CAC"];
-
                     return (
                       <div style={{ overflowX: "auto" }}>
                         <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
@@ -2122,24 +2205,17 @@ export default function Home() {
                             </tr>
                           </thead>
                           <tbody>
-                            {/* ── Flyers with spend (CAC calculated) ── */}
                             {withSpend.map((flyer, i) => renderRow(flyer, i))}
-
-                            {/* ── Divider before no-spend rows ── */}
                             {withoutSpend.length > 0 && (
                               <tr>
                                 <td colSpan={7} style={{ padding: "10px 20px", background: "#f1f5f9", borderTop: `2px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted }}>
-                                      Business Profiles &amp; Channels Without Spend
-                                    </span>
+                                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted }}>Business Profiles &amp; Channels Without Spend</span>
                                     <span style={{ fontSize: 11, color: C.textMuted }}>— no CAC calculable</span>
                                   </div>
                                 </td>
                               </tr>
                             )}
-
-                            {/* ── No-spend rows (Google My Business, etc.) ── */}
                             {withoutSpend.map((flyer, i) => renderRow(flyer, i, true))}
                           </tbody>
                         </table>
@@ -2147,15 +2223,250 @@ export default function Home() {
                     );
                   })()}
 
+                  {/* ── Tab: Per Flyer × Zip ───────────────────────────────────────── */}
+                  {eddmReportTab === "flyer-zip" && (() => {
+                    const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0 && f.conversions > 0);
+                    if (paidFlyers.length === 0) {
+                      return (
+                        <div style={{ padding: "48px 32px", textAlign: "center", color: C.textMuted }}>
+                          <p style={{ fontSize: 32, marginBottom: 12 }}>📌</p>
+                          <p style={{ fontSize: 14, fontWeight: 600 }}>Enter ad spend for at least one flyer to see zip-level breakdown.</p>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div>
+                        {paidFlyers.map(flyer => {
+                          const key   = flyer.flyerName + "||" + flyer.trackingNumber;
+                          const spend = parseFloat(eddmSpends[key] ?? "") || 0;
+                          const zipMap = new Map<string, number>();
+                          for (const c of flyer.matchedClients) {
+                            const z = c.zip || "Unknown";
+                            zipMap.set(z, (zipMap.get(z) ?? 0) + 1);
+                          }
+                          const zipRows = Array.from(zipMap.entries()).sort((a, b) => b[1] - a[1]);
+                          return (
+                            <div key={key} style={{ borderBottom: `1px solid ${C.border}` }}>
+                              {/* Flyer sub-header */}
+                              <div style={{ padding: "14px 24px", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                                <div>
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{flyer.flyerName}</span>
+                                  <span style={{ fontSize: 11, fontFamily: "monospace", color: C.textMuted, marginLeft: 10 }}>{eddmFmtPhone(flyer.trackingNumber)}</span>
+                                </div>
+                                <div style={{ display: "flex", gap: 16 }}>
+                                  <span style={{ fontSize: 11, color: C.textSec }}><b style={{ color: C.blue }}>{flyer.conversions}</b> clients</span>
+                                  <span style={{ fontSize: 11, color: C.textSec }}><b style={{ color: C.purple }}>${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> spend</span>
+                                  <span style={{ fontSize: 11, color: C.textSec }}><b style={{ color: C.green }}>{eddmFmtMoney(spend / flyer.conversions)}</b> CAC</span>
+                                </div>
+                              </div>
+                              <div style={{ overflowX: "auto" }}>
+                                <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                                  <thead>
+                                    <tr style={{ background: "#f0f9ff" }}>
+                                      {["Zip Code", "Clients", "% of Flyer", "Allocated Spend", "Zip CAC"].map((h, i) => (
+                                        <th key={h} style={{ padding: "9px 20px", textAlign: i === 0 ? "left" : "center", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#0369a1", borderBottom: "1px solid #bae6fd", whiteSpace: "nowrap" }}>{h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {zipRows.map(([z, cnt], idx) => {
+                                      const pct   = ((cnt / flyer.conversions) * 100).toFixed(1);
+                                      const alloc = spend * (cnt / flyer.conversions);
+                                      const zCac  = alloc / cnt;
+                                      return (
+                                        <tr key={z} style={{ borderBottom: "1px solid #e0f2fe", background: idx % 2 === 0 ? "#fff" : "#f0f9ff" }}>
+                                          <td style={{ padding: "10px 20px", fontWeight: 700, color: "#0369a1", fontFamily: "monospace" }}>{z}</td>
+                                          <td style={{ padding: "10px 20px", textAlign: "center", fontWeight: 600, color: C.text }}>{cnt}</td>
+                                          <td style={{ padding: "10px 20px", textAlign: "center", color: C.textSec }}>{pct}%</td>
+                                          <td style={{ padding: "10px 20px", textAlign: "center", color: C.purple, fontWeight: 600 }}>${alloc.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                          <td style={{ padding: "10px 20px", textAlign: "center" }}>
+                                            <span style={{ display: "inline-block", padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 800, background: zCac < 100 ? C.greenSoft : zCac < 300 ? C.amberSoft : C.redSoft, color: zCac < 100 ? C.green : zCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zCac)}</span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Tab: Overall Zip CAC ───────────────────────────────────────── */}
+                  {eddmReportTab === "overall-zip" && (() => {
+                    const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0 && f.conversions > 0);
+                    if (paidFlyers.length === 0) {
+                      return (
+                        <div style={{ padding: "48px 32px", textAlign: "center", color: C.textMuted }}>
+                          <p style={{ fontSize: 32, marginBottom: 12 }}>🗺️</p>
+                          <p style={{ fontSize: 14, fontWeight: 600 }}>Enter ad spend for at least one flyer to see overall zip CAC.</p>
+                        </div>
+                      );
+                    }
+
+                    // Aggregate across all paid flyers
+                    // zipAllocated: total spend allocated to this zip across all paid flyers
+                    // zipClientEvents: total paid-flyer client conversions from this zip (across all paid flyers)
+                    // flyersServed: set of flyer names that had clients from this zip
+                    const zipAllocated    = new Map<string, number>();
+                    const zipClientEvents = new Map<string, number>();
+                    const zipFlyers       = new Map<string, Set<string>>();
+
+                    for (const flyer of paidFlyers) {
+                      const key   = flyer.flyerName + "||" + flyer.trackingNumber;
+                      const spend = parseFloat(eddmSpends[key] ?? "") || 0;
+                      const zipMap = new Map<string, number>();
+                      for (const c of flyer.matchedClients) {
+                        const z = c.zip || "Unknown";
+                        zipMap.set(z, (zipMap.get(z) ?? 0) + 1);
+                      }
+                      for (const [z, cnt] of zipMap.entries()) {
+                        const alloc = spend * (cnt / flyer.conversions);
+                        zipAllocated.set(z,    (zipAllocated.get(z)    ?? 0) + alloc);
+                        zipClientEvents.set(z, (zipClientEvents.get(z) ?? 0) + cnt);
+                        if (!zipFlyers.has(z)) zipFlyers.set(z, new Set());
+                        zipFlyers.get(z)!.add(flyer.flyerName || "Unknown");
+                      }
+                    }
+
+                    const overallRows = Array.from(zipAllocated.entries())
+                      .map(([z, alloc]) => ({
+                        zip: z,
+                        alloc,
+                        clients: zipClientEvents.get(z) ?? 0,
+                        flyers: zipFlyers.get(z)?.size ?? 0,
+                        flyerNames: Array.from(zipFlyers.get(z) ?? []).join(", "),
+                      }))
+                      .sort((a, b) => b.clients - a.clients);
+
+                    const grandTotalAlloc   = overallRows.reduce((s, r) => s + r.alloc, 0);
+                    const grandTotalClients = overallRows.reduce((s, r) => s + r.clients, 0);
+
+                    return (
+                      <div>
+                        {/* Grand total strip */}
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderBottom: `1px solid ${C.border}`, background: "#fafafa" }}>
+                          {[
+                            { label: "Zip Codes", value: overallRows.length.toString(), color: C.blue },
+                            { label: "Total Paid Client Events", value: grandTotalClients.toString(), color: C.green },
+                            { label: "Overall Avg Zip CAC", value: grandTotalClients > 0 ? eddmFmtMoney(grandTotalAlloc / grandTotalClients) : "—", color: C.amber },
+                          ].map((s, i) => (
+                            <div key={s.label} style={{ padding: "16px 24px", borderRight: i < 2 ? `1px solid ${C.border}` : "none" }}>
+                              <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 4 }}>{s.label}</p>
+                              <p style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                            <thead>
+                              <tr style={{ background: "#f8fafc" }}>
+                                {["Zip Code", "Paid Clients", "Flyers", "Allocated Spend", "Zip CAC", "Flyer Names"].map((h, i) => (
+                                  <th key={h} style={{ padding: "12px 20px", textAlign: i === 0 || i === 5 ? "left" : "center", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMuted, borderBottom: `2px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {overallRows.map((row, i) => {
+                                const zCac = row.alloc / row.clients;
+                                return (
+                                  <tr key={row.zip} style={{ borderBottom: `1px solid ${C.border}`, background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                                    <td style={{ padding: "12px 20px", fontWeight: 700, color: "#0369a1", fontFamily: "monospace" }}>{row.zip}</td>
+                                    <td style={{ padding: "12px 20px", textAlign: "center", fontWeight: 600, color: C.text }}>{row.clients}</td>
+                                    <td style={{ padding: "12px 20px", textAlign: "center", color: C.textSec }}>{row.flyers}</td>
+                                    <td style={{ padding: "12px 20px", textAlign: "center", color: C.purple, fontWeight: 600 }}>${row.alloc.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    <td style={{ padding: "12px 20px", textAlign: "center" }}>
+                                      <span style={{ display: "inline-block", padding: "4px 14px", borderRadius: 20, fontSize: 13, fontWeight: 800, background: zCac < 100 ? C.greenSoft : zCac < 300 ? C.amberSoft : C.redSoft, color: zCac < 100 ? C.green : zCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zCac)}</span>
+                                    </td>
+                                    <td style={{ padding: "12px 20px", fontSize: 11, color: C.textSec, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.flyerNames}>{row.flyerNames}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Report footer */}
-                  <div style={{ padding: "16px 32px", borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ padding: "16px 32px", borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
                     <p style={{ fontSize: 11, color: C.textMuted }}>
                       CAC color: <span style={{ color: C.green, fontWeight: 600 }}>Green &lt; $100</span> · <span style={{ color: C.amber, fontWeight: 600 }}>Amber $100–$300</span> · <span style={{ color: C.red, fontWeight: 600 }}>Red &gt; $300</span>
                     </p>
-                    <button
-                      onClick={() => setEddmReportOpen(false)}
-                      style={{ fontSize: 12, fontWeight: 600, color: C.textSec, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 16px", cursor: "pointer" }}
-                    >Close</button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        onClick={() => {
+                          // Build CSV based on active tab
+                          let csv = "";
+                          if (eddmReportTab === "flyer") {
+                            csv = ["Flyer Name,Tracking Number,Total Calls,Conversions,Conv Rate %,Ad Spend,CAC"].join("\n");
+                            csv += "\n" + eddmResponse.results.map(f => {
+                              const k = f.flyerName + "||" + f.trackingNumber;
+                              const sp = parseFloat(eddmSpends[k] ?? "") || 0;
+                              const cac = sp > 0 && f.conversions > 0 ? (sp / f.conversions).toFixed(2) : "";
+                              const cr = f.totalCalls > 0 ? ((f.conversions / f.totalCalls) * 100).toFixed(1) : "0.0";
+                              return `"${f.flyerName}",${f.trackingNumber},${f.totalCalls},${f.conversions},${cr},${sp > 0 ? sp.toFixed(2) : ""},${cac}`;
+                            }).join("\n");
+                          } else if (eddmReportTab === "flyer-zip") {
+                            csv = "Flyer Name,Tracking Number,Zip Code,Clients,% of Flyer,Allocated Spend,Zip CAC";
+                            const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0 && f.conversions > 0);
+                            for (const flyer of paidFlyers) {
+                              const spend = parseFloat(eddmSpends[flyer.flyerName + "||" + flyer.trackingNumber] ?? "") || 0;
+                              const zipMap = new Map<string, number>();
+                              for (const c of flyer.matchedClients) { const z = c.zip || "Unknown"; zipMap.set(z, (zipMap.get(z) ?? 0) + 1); }
+                              for (const [z, cnt] of Array.from(zipMap.entries()).sort((a, b) => b[1] - a[1])) {
+                                const alloc = spend * (cnt / flyer.conversions);
+                                const zCac  = alloc / cnt;
+                                csv += `\n"${flyer.flyerName}",${flyer.trackingNumber},${z},${cnt},${((cnt / flyer.conversions) * 100).toFixed(1)},${alloc.toFixed(2)},${zCac.toFixed(2)}`;
+                              }
+                            }
+                          } else {
+                            csv = "Zip Code,Paid Clients,Flyers,Allocated Spend,Zip CAC,Flyer Names";
+                            const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0 && f.conversions > 0);
+                            const zipAllocated = new Map<string, number>();
+                            const zipClientEvents = new Map<string, number>();
+                            const zipFlyers = new Map<string, Set<string>>();
+                            for (const flyer of paidFlyers) {
+                              const spend = parseFloat(eddmSpends[flyer.flyerName + "||" + flyer.trackingNumber] ?? "") || 0;
+                              const zipMap = new Map<string, number>();
+                              for (const c of flyer.matchedClients) { const z = c.zip || "Unknown"; zipMap.set(z, (zipMap.get(z) ?? 0) + 1); }
+                              for (const [z, cnt] of zipMap.entries()) {
+                                zipAllocated.set(z, (zipAllocated.get(z) ?? 0) + spend * (cnt / flyer.conversions));
+                                zipClientEvents.set(z, (zipClientEvents.get(z) ?? 0) + cnt);
+                                if (!zipFlyers.has(z)) zipFlyers.set(z, new Set());
+                                zipFlyers.get(z)!.add(flyer.flyerName || "Unknown");
+                              }
+                            }
+                            const rows = Array.from(zipAllocated.entries()).sort((a, b) => (zipClientEvents.get(b[0]) ?? 0) - (zipClientEvents.get(a[0]) ?? 0));
+                            for (const [z, alloc] of rows) {
+                              const clients = zipClientEvents.get(z) ?? 0;
+                              const flyers  = zipFlyers.get(z)?.size ?? 0;
+                              const names   = Array.from(zipFlyers.get(z) ?? []).join("; ");
+                              csv += `\n${z},${clients},${flyers},${alloc.toFixed(2)},${(alloc / clients).toFixed(2)},"${names}"`;
+                            }
+                          }
+                          const blob = new Blob([csv], { type: "text/csv" });
+                          const url  = URL.createObjectURL(blob);
+                          const a    = document.createElement("a");
+                          a.href = url;
+                          a.download = `eddm-report-${eddmReportTab}-${new Date().toISOString().slice(0, 10)}.csv`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        style={{ fontSize: 12, fontWeight: 600, color: C.blue, background: C.blueSoft, border: `1px solid #bfdbfe`, borderRadius: 8, padding: "7px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                      >
+                        <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        Download CSV
+                      </button>
+                      <button
+                        onClick={() => setEddmReportOpen(false)}
+                        style={{ fontSize: 12, fontWeight: 600, color: C.textSec, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 16px", cursor: "pointer" }}
+                      >Close</button>
+                    </div>
                   </div>
                 </div>
               </div>
