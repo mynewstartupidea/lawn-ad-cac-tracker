@@ -312,6 +312,7 @@ export default function Home() {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // CAC Dashboard AI Chat state
+  const [cacChatOpen, setCacChatOpen] = useState(false);
   const [cacChatMessages, setCacChatMessages] = useState<ChatMessage[]>([
     {
       id: "cac-welcome",
@@ -322,6 +323,7 @@ export default function Home() {
   ]);
   const [cacChatInput, setCacChatInput] = useState("");
   const [cacChatThinking, setCacChatThinking] = useState(false);
+  const [cacChatHasUnread, setCacChatHasUnread] = useState(false);
   const cacChatEndRef = useRef<HTMLDivElement>(null);
 
   // Campaigns state
@@ -607,6 +609,8 @@ export default function Home() {
       }]);
     } finally {
       setCacChatThinking(false);
+      // Show unread dot on FAB if panel is closed
+      setCacChatHasUnread(prev => prev || true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacChatMessages, dateRange]);
@@ -1044,116 +1048,6 @@ export default function Home() {
               </div>
             </section>
 
-            {/* ── CAC AI Chat ───────────────────────────────────────────── */}
-            <section>
-              <div style={{ marginBottom: 14 }}>
-                <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Ask AI About Your Data</h2>
-                <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
-                  Ask about CAC, best performing ads, spend, or sales for any time period
-                </p>
-              </div>
-
-              <div style={{
-                background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
-                boxShadow: C.shadow, display: "flex", flexDirection: "column", height: 420,
-              }}>
-                {/* Header */}
-                <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: C.purpleSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke={C.purple} strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
-                  </div>
-                  <div>
-                    <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>CAC Analyst</p>
-                    <p style={{ fontSize: 11, color: C.purple }}>● Reads your live Supabase + Facebook data</p>
-                  </div>
-                </div>
-
-                {/* Messages */}
-                <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-                  {cacChatMessages.map(msg => (
-                    <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
-                      <div style={{
-                        maxWidth: "82%",
-                        padding: "9px 13px",
-                        borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-                        background: msg.role === "user" ? C.blue : C.bg,
-                        border: msg.role === "user" ? "none" : `1px solid ${C.border}`,
-                        color: msg.role === "user" ? "#fff" : C.text,
-                        fontSize: 13,
-                        lineHeight: 1.55,
-                      }}>
-                        {msg.text.split("\n").map((line, i) => (
-                          <span key={i}>{line}{i < msg.text.split("\n").length - 1 && <br />}</span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {cacChatThinking && (
-                    <div style={{ display: "flex", gap: 5, padding: "8px 12px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: "14px 14px 14px 4px", width: "fit-content" }}>
-                      {[0, 1, 2].map(i => (
-                        <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.purple, opacity: 0.6, animation: "bounce 1s ease-in-out infinite", animationDelay: `${i * 0.15}s` }} />
-                      ))}
-                    </div>
-                  )}
-                  <div ref={cacChatEndRef} />
-                </div>
-
-                {/* Suggested prompts */}
-                {cacChatMessages.length <= 1 && (
-                  <div style={{ padding: "0 14px 10px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {[
-                      "Best performing ad this month",
-                      "What's my CAC last 7 days?",
-                      "How much did we spend vs sales?",
-                      "Which ad has the lowest CAC?",
-                    ].map(p => (
-                      <button key={p} onClick={() => sendCacChat(p)}
-                        style={{
-                          padding: "5px 11px", borderRadius: 20, fontSize: 12, fontWeight: 500,
-                          background: C.purpleSoft, color: C.purple, border: `1px solid ${C.purple}30`,
-                          cursor: "pointer",
-                        }}>
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Input */}
-                <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8 }}>
-                  <input
-                    type="text"
-                    value={cacChatInput}
-                    onChange={e => setCacChatInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendCacChat(cacChatInput); } }}
-                    placeholder="Ask about CAC, spend, best ads…"
-                    disabled={cacChatThinking}
-                    style={{
-                      flex: 1, padding: "9px 13px", borderRadius: 9, fontSize: 13,
-                      background: C.bg, border: `1px solid ${C.border}`, color: C.text, outline: "none",
-                      opacity: cacChatThinking ? 0.6 : 1,
-                    }}
-                  />
-                  <button
-                    onClick={() => sendCacChat(cacChatInput)}
-                    disabled={cacChatThinking || !cacChatInput.trim()}
-                    style={{
-                      padding: "9px 16px", borderRadius: 9, fontSize: 13, fontWeight: 600,
-                      background: cacChatThinking || !cacChatInput.trim() ? C.border : C.purple,
-                      color: cacChatThinking || !cacChatInput.trim() ? C.textMuted : "#fff",
-                      border: "none", cursor: cacChatThinking || !cacChatInput.trim() ? "not-allowed" : "pointer",
-                      display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s",
-                    }}>
-                    {cacChatThinking ? <Spinner size={13} color={C.purple} /> : (
-                      <svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                      </svg>
-                    )}
-                    Ask
-                  </button>
-                </div>
-              </div>
-            </section>
           </>
         )}
 
@@ -1585,6 +1479,175 @@ export default function Home() {
           Leads from GoHighLevel · Sales via Slack · Spend & metrics from Facebook Ads Manager
         </footer>
       </main>
+
+      {/* ── CAC AI Chat FAB + Overlay (fixed, always visible) ─────────────── */}
+      {tab === "cac" && (
+        <>
+          {/* Floating action button */}
+          <button
+            onClick={() => { setCacChatOpen(o => !o); setCacChatHasUnread(false); }}
+            style={{
+              position: "fixed", bottom: 28, right: 28, zIndex: 50,
+              width: 54, height: 54, borderRadius: "50%",
+              background: "linear-gradient(135deg, #7c3aed, #6d28d9)",
+              border: "none", cursor: "pointer",
+              boxShadow: "0 4px 20px rgba(124,58,237,0.45)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "transform 0.2s, box-shadow 0.2s",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1.08)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 24px rgba(124,58,237,0.55)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 20px rgba(124,58,237,0.45)"; }}
+          >
+            {cacChatOpen
+              ? <svg width={20} height={20} fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              : <svg width={20} height={20} fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
+            }
+            {/* Unread dot */}
+            {cacChatHasUnread && !cacChatOpen && (
+              <span style={{
+                position: "absolute", top: 6, right: 6,
+                width: 10, height: 10, borderRadius: "50%",
+                background: "#22c55e", border: "2px solid #fff",
+              }} />
+            )}
+          </button>
+
+          {/* Tooltip label — shown when panel closed */}
+          {!cacChatOpen && (
+            <div style={{
+              position: "fixed", bottom: 36, right: 92, zIndex: 50,
+              background: "#1e293b", color: "#fff", fontSize: 12, fontWeight: 500,
+              padding: "6px 12px", borderRadius: 8, whiteSpace: "nowrap",
+              pointerEvents: "none",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+            }}>
+              Ask AI about your data
+              <span style={{ position: "absolute", right: -5, top: "50%", transform: "translateY(-50%)", borderTop: "5px solid transparent", borderBottom: "5px solid transparent", borderLeft: "5px solid #1e293b" }} />
+            </div>
+          )}
+
+          {/* Slide-up chat panel */}
+          <div style={{
+            position: "fixed", bottom: 92, right: 28, zIndex: 49,
+            width: 400,
+            maxHeight: "calc(100vh - 120px)",
+            background: C.card,
+            border: `1px solid ${C.border}`,
+            borderRadius: 18,
+            boxShadow: "0 8px 40px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.08)",
+            display: "flex", flexDirection: "column",
+            overflow: "hidden",
+            transform: cacChatOpen ? "translateY(0) scale(1)" : "translateY(16px) scale(0.97)",
+            opacity: cacChatOpen ? 1 : 0,
+            pointerEvents: cacChatOpen ? "all" : "none",
+            transition: "transform 0.22s cubic-bezier(0.34,1.56,0.64,1), opacity 0.18s ease",
+          }}>
+            {/* Panel header */}
+            <div style={{
+              padding: "14px 16px", borderBottom: `1px solid ${C.border}`,
+              background: "linear-gradient(135deg, #7c3aed08, #ffffff)",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg width={16} height={16} fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
+                </div>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: C.text }}>CAC Analyst</p>
+                  <p style={{ fontSize: 11, color: C.purple }}>● Live data · {DATE_RANGE_LABELS[dateRange]}</p>
+                </div>
+              </div>
+              <button onClick={() => setCacChatOpen(false)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: 4, borderRadius: 6 }}>
+                <svg width={16} height={16} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {/* Messages */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10, minHeight: 280, maxHeight: 400 }}>
+              {cacChatMessages.map(msg => (
+                <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                  <div style={{
+                    maxWidth: "84%",
+                    padding: "9px 13px",
+                    borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                    background: msg.role === "user" ? "linear-gradient(135deg,#7c3aed,#6d28d9)" : C.bg,
+                    border: msg.role === "user" ? "none" : `1px solid ${C.border}`,
+                    color: msg.role === "user" ? "#fff" : C.text,
+                    fontSize: 13, lineHeight: 1.55,
+                  }}>
+                    {msg.text.split("\n").map((line, i, arr) => (
+                      <span key={i}>{line}{i < arr.length - 1 && <br />}</span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {cacChatThinking && (
+                <div style={{ display: "flex", gap: 5, padding: "8px 12px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: "14px 14px 14px 4px", width: "fit-content" }}>
+                  {[0, 1, 2].map(i => (
+                    <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.purple, opacity: 0.7, animation: "bounce 1s ease-in-out infinite", animationDelay: `${i * 0.15}s` }} />
+                  ))}
+                </div>
+              )}
+              <div ref={cacChatEndRef} />
+            </div>
+
+            {/* Suggested prompts — only before first real message */}
+            {cacChatMessages.length <= 1 && (
+              <div style={{ padding: "0 12px 10px", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[
+                  "Best performing ad",
+                  "CAC last 7 days?",
+                  "Spend vs sales?",
+                  "Lowest CAC ad?",
+                ].map(p => (
+                  <button key={p} onClick={() => sendCacChat(p)}
+                    style={{
+                      padding: "5px 11px", borderRadius: 20, fontSize: 11, fontWeight: 500,
+                      background: C.purpleSoft, color: C.purple, border: `1px solid ${C.purple}30`,
+                      cursor: "pointer", transition: "background 0.15s",
+                    }}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Input bar */}
+            <div style={{ padding: "10px 12px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, background: C.card }}>
+              <input
+                type="text"
+                value={cacChatInput}
+                onChange={e => setCacChatInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendCacChat(cacChatInput); } }}
+                placeholder="Ask about CAC, spend, best ads…"
+                disabled={cacChatThinking}
+                autoFocus={cacChatOpen}
+                style={{
+                  flex: 1, padding: "9px 13px", borderRadius: 9, fontSize: 13,
+                  background: C.bg, border: `1px solid ${C.border}`, color: C.text, outline: "none",
+                  opacity: cacChatThinking ? 0.6 : 1,
+                }}
+              />
+              <button
+                onClick={() => sendCacChat(cacChatInput)}
+                disabled={cacChatThinking || !cacChatInput.trim()}
+                style={{
+                  padding: "9px 14px", borderRadius: 9, fontSize: 13, fontWeight: 600,
+                  background: cacChatThinking || !cacChatInput.trim() ? C.border : "linear-gradient(135deg,#7c3aed,#6d28d9)",
+                  color: cacChatThinking || !cacChatInput.trim() ? C.textMuted : "#fff",
+                  border: "none", cursor: cacChatThinking || !cacChatInput.trim() ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s",
+                }}>
+                {cacChatThinking
+                  ? <Spinner size={13} color={C.purple} />
+                  : <svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+                }
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
