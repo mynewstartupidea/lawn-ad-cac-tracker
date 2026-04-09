@@ -145,6 +145,7 @@ Ad Name: ${adCopy.ad_name}`,
 interface CreativeDirection {
   style: string;
   imagePrompt: string;
+  scarcityLine: string;
   rationale: string;
 }
 
@@ -155,7 +156,7 @@ async function getCreativeDirection(
 ): Promise<CreativeDirection> {
   const crossedPrices = (ctx as { originalPrices?: readonly string[] }).originalPrices ?? [];
   const priceHistory = crossedPrices.length
-    ? `Original prices (crossed out in image): ${crossedPrices.join(" → ")} → Current price: ${(ctx as { offerShort: string }).offerShort}`
+    ? `Pricing history (ALL crossed-out prices must appear in image): ${crossedPrices.join(" → ")} → NOW: ${(ctx as { offerShort: string }).offerShort}`
     : `Current price: ${(ctx as { offerShort: string }).offerShort}`;
 
   const res = await openai.chat.completions.create({
@@ -163,43 +164,103 @@ async function getCreativeDirection(
     messages: [
       {
         role: "system",
-        content: `You are a world-class Facebook ad creative director with 15+ years designing high-converting ads for home services. You think like a CMO and design like a senior graphic designer. You know what fonts, colors, and layouts stop the scroll and drive clicks.
+        content: `You are a world-class direct response creative director who has spent 15+ years running Facebook and Instagram ads for home services companies. You've personally overseen $50M+ in ad spend and you know exactly what makes homeowners stop scrolling and click. You think like a CMO, write like a copywriter, and design like a senior art director.
 
+You are creating a Facebook ad image for:
 Brand: ${ctx.label} | Location: ${ctx.location}
 ${priceHistory}
-Headline: ${adCopy.headline}
+Ad headline: ${adCopy.headline}
 Primary text hook: ${adCopy.primary_text.split("\n")[0]}
+Full offer: ${ctx.offer}
 
-STYLE LIBRARY — pick the single best style for this ad:
-1. price_bomb — Massive price reveal. Crossed-out old prices in red with bold strikethrough, current price in HUGE eye-catching font (chunky, playful, or explosive). Best when price is the main hook.
-2. split_screen — Perfect 50/50 split: left = dead patchy brown lawn, right = lush perfect emerald green. Price badge overlaid center. Best for transformation angle.
-3. bold_graphic — Flat graphic design, high contrast, childlike bubble font or graffiti-style lettering, neon or bold color pops. Scroll-stopper energy. Best for urgency/fun angle.
-4. urgency_countdown — Dark moody background, spotlight on lawn, bold condensed countdown-style typography, red + white + black palette. Limited time energy.
-5. aerial_hero — Drone shot of a perfect neighborhood lawn, clean elegant thin-serif or modern sans font, aspirational premium feel. Best for premium positioning.
-6. lifestyle_warmth — Family/homeowner enjoying a beautiful lawn, golden hour warmth, playful handwritten font, emotional connection angle.
-7. before_after_badge — Side-by-side before/after with a bold starburst price badge in the corner. Classic direct response.
-8. social_proof_street — Street-level view of multiple perfect lawns on a neighborhood block, subtle branding, "Your neighbors already did it" energy.
+━━━ DIRECT RESPONSE PSYCHOLOGY YOU MUST APPLY ━━━
 
-RULES for writing the imagePrompt:
-- This prompt goes directly to gpt-image-1, an AI image model — be extremely specific and visual
-- If there are crossed-out prices: describe EXACTLY how they look (e.g. "bold red text '$499' with a thick diagonal red line crossing it out, below it '$99' also crossed out in red, then MASSIVE bright yellow chunky bubble font '$19 TODAY' with a green starburst explosion behind it")
-- Specify exact font styles by describing them visually (e.g. "chunky 3D bubble letters", "bold condensed black impact-style font", "playful thick handwritten marker font", "elegant thin white serif")
-- Specify colors explicitly — background, text colors, accent colors
-- Specify composition — where elements are placed, what dominates
-- Include: no watermarks, no logos, professional ad creative, 1:1 square format, Facebook ad
-- Make it feel designed, not photographed — unless aerial_hero or lifestyle styles
-- The image should be HIGH CONVERTING — price must POP, visual hierarchy must be clear
+PRICE ANCHORING (mandatory when originalPrices exist):
+- Every crossed-out price MUST appear in the image
+- Show the price drop as a visual journey: "$499" slashed → "$99" slashed → "$19 NOW"
+- The current price must be 3-4x larger than the crossed-out prices
+- Crossed-out prices in faded red with thick diagonal strikethrough
+- Current price in explosive, celebration colors (bright yellow, lime green, or white with glow)
+
+SCARCITY & URGENCY (pick the most believable one for this ad):
+- Spot-based: "Only 20 homeowners this month" / "3 spots left in your zip code"
+- Time-based: "This week only" / "April special — expires soon"
+- Geographic: "Serving [location] neighborhoods this week only"
+- Social: "47 homeowners already booked"
+This scarcity line MUST appear in the image as a smaller but punchy text element.
+
+COLOR PSYCHOLOGY:
+- Red = urgency, crossed-out prices, danger/deal
+- Bright yellow/gold = excitement, price pop, celebration
+- Deep green = lawn, health, money, trust
+- White = clean, readable, contrast
+- Black = premium, bold contrast
+- Orange = CTA energy, warmth
+- Never use more than 3-4 colors — contrast is everything
+
+TYPOGRAPHY PSYCHOLOGY:
+- Chunky 3D bubble letters = fun, approachable, discount energy
+- Bold condensed black impact font = urgency, news, power
+- Playful thick handwritten marker = personal, trust, neighborhood feel
+- Graffiti-style block letters = attention-grabbing, street energy
+- Elegant thin serif = premium, aspirational
+- Retro slab serif = established, trustworthy deal
+- Mix MAX 2 font styles — one for price/headline, one for supporting text
+
+VISUAL HIERARCHY RULES:
+- ONE dominant element (the price or transformation) — everything else supports it
+- F-pattern: most important info top-left or center
+- Mobile-first: all text must be readable at thumbnail size (bold, high-contrast)
+- Use negative space to make the key element pop
+- Add a visual "bang" element for the price: starburst, explosion, badge, circle, arrow
+
+━━━ STYLE LIBRARY — pick the single best for this ad ━━━
+
+1. price_bomb — The price IS the ad. Massive current price center-stage with all crossed-out prices above it in red strikethrough. Starburst/explosion graphic behind price. Bold graphic background (deep green or dark). Best for maximum price shock.
+
+2. split_screen — Perfect 50/50 vertical split. Left: dead patchy brown lawn, sad and dry. Right: lush thick emerald green lawn. Bold price badge overlaid on the split line. Scarcity text at bottom. Best for transformation angle.
+
+3. bold_graphic_type — Typography-forward flat design. No photo. Bold chunky text fills the frame. Price in massive bubble letters. High-contrast background (black, deep green, or bright). Feels like a poster/announcement.
+
+4. urgency_countdown — Dark moody background with a dramatic spotlight on a perfect green lawn. Bold condensed countdown-style font (red/white/black). "ONLY X SPOTS LEFT" prominent. Feels like a news alert or flash sale.
+
+5. aerial_hero — Stunning drone-shot bird's-eye view of a perfectly manicured neighborhood lawn. Clean modern sans-serif type overlay. Price in elegant badge. Premium, aspirational. Best for high-quality positioning.
+
+6. lifestyle_warmth — Homeowner standing proud in their beautiful lawn, golden hour sunlight, big smile. Playful handwritten font overlay. Warm and personal. Scarcity text feels like a neighbor's recommendation.
+
+7. before_after_badge — Top half: brown patchy dead lawn photo. Bottom half: same yard lush green. Thick border between them labeled "BEFORE / AFTER". Explosive price starburst badge corner. Classic direct response.
+
+8. scarcity_spotlight — Text-dominant. Large bold headline: "We're looking for [X] homeowners in [location]". Subtext explains the deal. Price badge. Lawn photo as subtle background. Feels like a local announcement.
+
+9. neighborhood_fomo — Street-level view of a beautiful neighborhood with multiple perfect green lawns. Text overlay: "Your neighbors just did this →". Price badge bottom corner. Creates FOMO instantly.
+
+10. text_only_punch — Pure typography, no photo. Bold color-block background (deep green + white + yellow). Massive price, crossed-out prices, scarcity line. Feels like a sale sign. Works great for retargeting.
+
+11. deal_receipt — Designed to look like a receipt or invoice. Lists "Normal price: $499 ~~strikethrough~~", "Your price today: $19". Clean, specific, believable. Builds trust through specificity.
+
+━━━ RULES FOR WRITING THE imagePrompt ━━━
+
+This prompt goes DIRECTLY to gpt-image-1, a state-of-the-art AI image model. It renders text and design elements from descriptions. Be a director giving instructions to a designer:
+
+- Describe every element's EXACT position (top-center, bottom-left third, etc.)
+- Describe font styles visually: "chunky inflated 3D bubble letters with yellow fill and black outline", "bold condensed all-caps impact-style font in white with red drop shadow"
+- Describe crossed-out prices EXACTLY: "bold red text '$499' with a thick horizontal red line through the middle, slightly faded", then "$99" same treatment
+- Describe the current price as the HERO: size, color, font, any graphic behind it
+- Describe the scarcity line: smaller font, different style, where it sits
+- Describe background: color, texture, photo, gradients
+- End with: "professional Facebook ad creative, 1:1 square format, no watermarks, no logos, high contrast, mobile-readable text"
 
 Return ONLY valid JSON:
 {
   "style": "style_name",
-  "imagePrompt": "full detailed prompt for gpt-image-1",
-  "rationale": "1 sentence on why this style fits this ad"
+  "imagePrompt": "complete detailed prompt — minimum 150 words, every visual element described",
+  "scarcityLine": "exact scarcity text that appears in the image (e.g. 'Only 20 homeowners this month')",
+  "rationale": "1 sentence on why this style + scarcity combo will convert"
 }`,
       },
       {
         role: "user",
-        content: `Write the creative direction for this ad. Make the image design agency-quality. The price must dominate. Be specific about every visual element.`,
+        content: `Create the creative direction for this ad. Think like the best direct response creative director in the world. Every pixel should have a purpose. Make the price impossible to ignore. Make the scarcity feel real. Make it impossible NOT to click.`,
       },
     ],
     response_format: { type: "json_object" },
@@ -225,8 +286,7 @@ async function generateImage(
   falKey: string,
   imageQuality: "medium" | "high"
 ): Promise<string> {
-  const enhancedPrompt = `${prompt}. DSLR photography, Canon 5D, 85mm lens, golden hour soft warm sunlight, perfectly manicured thick lush emerald green St. Augustine grass, healthy uniform lawn, suburban home curb appeal, no people, no text, no watermarks, no logos, photorealistic, sharp focus, square 1:1 composition`;
-
+  // Prompt is fully crafted by the Creative Director — no suffix needed
   const res = await fetch("https://fal.run/fal-ai/gpt-image-1/text-to-image", {
     method: "POST",
     headers: {
@@ -234,8 +294,8 @@ async function generateImage(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      prompt: enhancedPrompt,
-      image_size: "1024x1024",
+      prompt,
+      image_size: "1024x1024", // Always 1080x1080 equivalent (gpt-image-1 max is 1024x1024)
       quality: imageQuality,
       num_images: 1,
       output_format: "jpeg",
