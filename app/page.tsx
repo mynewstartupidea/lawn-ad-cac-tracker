@@ -2055,74 +2055,90 @@ export default function Home() {
                     </p>
                   </div>
 
-                  {/* Report table */}
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: "#f8fafc" }}>
-                          {["Flyer Name", "Tracking Number", "Total Calls", "Conversions", "Conv. Rate", "Ad Spend", "CAC"].map((h, i) => (
-                            <th key={h} style={{
-                              padding: "12px 20px", textAlign: i >= 2 ? "center" : "left",
-                              fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
-                              textTransform: "uppercase", color: C.textMuted,
-                              borderBottom: `2px solid ${C.border}`, whiteSpace: "nowrap",
-                            }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {eddmResponse.results.map((flyer, i) => {
-                          const key      = flyer.flyerName + flyer.trackingNumber;
-                          const spend    = parseFloat(eddmSpends[key] ?? "") || 0;
-                          const cac      = spend > 0 && flyer.conversions > 0 ? spend / flyer.conversions : null;
-                          const convRate = flyer.totalCalls > 0 ? ((flyer.conversions / flyer.totalCalls) * 100).toFixed(1) : "0.0";
-                          const hasSpend = spend > 0;
+                  {/* Report table — spend rows first, no-spend (profiles) at bottom */}
+                  {(() => {
+                    const withSpend    = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + f.trackingNumber] ?? "") || 0) > 0);
+                    const withoutSpend = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + f.trackingNumber] ?? "") || 0) === 0);
 
-                          return (
-                            <tr key={key} style={{ borderBottom: `1px solid ${C.border}`, background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                              <td style={{ padding: "14px 20px", fontWeight: 600, color: C.text, maxWidth: 220 }}>
-                                {flyer.flyerName || "Unknown"}
-                              </td>
-                              <td style={{ padding: "14px 20px", fontFamily: "monospace", fontSize: 12, color: C.textSec }}>
-                                {eddmFmtPhone(flyer.trackingNumber)}
-                              </td>
-                              <td style={{ padding: "14px 20px", textAlign: "center", color: C.blue, fontWeight: 600 }}>
-                                {flyer.totalCalls.toLocaleString()}
-                              </td>
-                              <td style={{ padding: "14px 20px", textAlign: "center" }}>
-                                <span style={{
-                                  display: "inline-block", padding: "3px 12px", borderRadius: 20,
-                                  fontSize: 12, fontWeight: 700,
-                                  background: flyer.conversions > 0 ? C.greenSoft : "#f1f5f9",
-                                  color: flyer.conversions > 0 ? C.green : C.textMuted,
-                                }}>{flyer.conversions}</span>
-                              </td>
-                              <td style={{ padding: "14px 20px", textAlign: "center", color: C.textSec, fontSize: 12 }}>
-                                {convRate}%
-                              </td>
-                              <td style={{ padding: "14px 20px", textAlign: "center", fontWeight: 600 }}>
-                                {hasSpend
-                                  ? <span style={{ color: C.purple }}>${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                  : <span style={{ color: C.textMuted, fontSize: 12 }}>No spend entered</span>}
-                              </td>
-                              <td style={{ padding: "14px 20px", textAlign: "center" }}>
-                                {cac !== null
-                                  ? (
-                                    <span style={{
-                                      display: "inline-block", padding: "4px 14px", borderRadius: 20,
-                                      fontSize: 13, fontWeight: 800,
-                                      background: cac < 100 ? C.greenSoft : cac < 300 ? C.amberSoft : C.redSoft,
-                                      color:      cac < 100 ? C.green     : cac < 300 ? C.amber     : C.red,
-                                    }}>{eddmFmtMoney(cac)}</span>
-                                  )
-                                  : <span style={{ color: C.textMuted }}>—</span>}
-                              </td>
+                    const renderRow = (flyer: EddmFlyer, i: number, dimmed?: boolean) => {
+                      const key      = flyer.flyerName + flyer.trackingNumber;
+                      const spend    = parseFloat(eddmSpends[key] ?? "") || 0;
+                      const cac      = spend > 0 && flyer.conversions > 0 ? spend / flyer.conversions : null;
+                      const convRate = flyer.totalCalls > 0 ? ((flyer.conversions / flyer.totalCalls) * 100).toFixed(1) : "0.0";
+
+                      return (
+                        <tr key={key} style={{ borderBottom: `1px solid ${C.border}`, background: dimmed ? "#fafafa" : i % 2 === 0 ? "#fff" : "#f8fafc", opacity: dimmed ? 0.75 : 1 }}>
+                          <td style={{ padding: "14px 20px", fontWeight: 600, color: dimmed ? C.textSec : C.text, maxWidth: 220 }}>
+                            {flyer.flyerName || "Unknown"}
+                          </td>
+                          <td style={{ padding: "14px 20px", fontFamily: "monospace", fontSize: 12, color: C.textSec }}>
+                            {eddmFmtPhone(flyer.trackingNumber)}
+                          </td>
+                          <td style={{ padding: "14px 20px", textAlign: "center", color: C.blue, fontWeight: 600 }}>
+                            {flyer.totalCalls.toLocaleString()}
+                          </td>
+                          <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                            <span style={{
+                              display: "inline-block", padding: "3px 12px", borderRadius: 20,
+                              fontSize: 12, fontWeight: 700,
+                              background: flyer.conversions > 0 ? C.greenSoft : "#f1f5f9",
+                              color: flyer.conversions > 0 ? C.green : C.textMuted,
+                            }}>{flyer.conversions}</span>
+                          </td>
+                          <td style={{ padding: "14px 20px", textAlign: "center", color: C.textSec, fontSize: 12 }}>
+                            {convRate}%
+                          </td>
+                          <td style={{ padding: "14px 20px", textAlign: "center", fontWeight: 600 }}>
+                            {spend > 0
+                              ? <span style={{ color: C.purple }}>${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              : <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>}
+                          </td>
+                          <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                            {cac !== null
+                              ? <span style={{ display: "inline-block", padding: "4px 14px", borderRadius: 20, fontSize: 13, fontWeight: 800, background: cac < 100 ? C.greenSoft : cac < 300 ? C.amberSoft : C.redSoft, color: cac < 100 ? C.green : cac < 300 ? C.amber : C.red }}>{eddmFmtMoney(cac)}</span>
+                              : <span style={{ color: C.textMuted }}>—</span>}
+                          </td>
+                        </tr>
+                      );
+                    };
+
+                    const cols = ["Flyer Name", "Tracking Number", "Total Calls", "Conversions", "Conv. Rate", "Ad Spend", "CAC"];
+
+                    return (
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "#f8fafc" }}>
+                              {cols.map((h, i) => (
+                                <th key={h} style={{ padding: "12px 20px", textAlign: i >= 2 ? "center" : "left", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMuted, borderBottom: `2px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                              ))}
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                          </thead>
+                          <tbody>
+                            {/* ── Flyers with spend (CAC calculated) ── */}
+                            {withSpend.map((flyer, i) => renderRow(flyer, i))}
+
+                            {/* ── Divider before no-spend rows ── */}
+                            {withoutSpend.length > 0 && (
+                              <tr>
+                                <td colSpan={7} style={{ padding: "10px 20px", background: "#f1f5f9", borderTop: `2px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted }}>
+                                      Business Profiles &amp; Channels Without Spend
+                                    </span>
+                                    <span style={{ fontSize: 11, color: C.textMuted }}>— no CAC calculable</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+
+                            {/* ── No-spend rows (Google My Business, etc.) ── */}
+                            {withoutSpend.map((flyer, i) => renderRow(flyer, i, true))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
 
                   {/* Report footer */}
                   <div style={{ padding: "16px 32px", borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
