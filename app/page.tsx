@@ -68,7 +68,7 @@ type DateRange  = "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
 type Account    = "all" | "florida" | "georgia";
-type Tab        = "cac" | "ads";
+type Tab        = "cac" | "ads" | "eddm";
 type AdTab      = "chat" | "metrics" | "assets";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -113,6 +113,8 @@ const C = {
   cyanSoft:    "#ecfeff",
   amber:       "#d97706",
   amberSoft:   "#fffbeb",
+  red:         "#dc2626",
+  redSoft:     "#fef2f2",
   shadow:      "0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04)",
   shadowMd:    "0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04)",
 };
@@ -269,6 +271,181 @@ const selectStyle: React.CSSProperties = {
   boxShadow: C.shadow,
 };
 
+// ─── EDDM Types ───────────────────────────────────────────────────────────────
+
+interface EddmClient {
+  name: string;
+  matchedPhone: string;
+  homePhone: string;
+  workPhone: string;
+  cellPhone: string;
+  address: string;
+}
+
+interface EddmFlyer {
+  flyerName: string;
+  trackingNumber: string;
+  totalCalls: number;
+  conversions: number;
+  matchedClients: EddmClient[];
+}
+
+interface EddmResponse {
+  results: EddmFlyer[];
+  totalCalls: number;
+  totalMatched: number;
+  saClientsRead: number;
+  error?: string;
+}
+
+// ─── EDDM Helpers ─────────────────────────────────────────────────────────────
+
+function eddmFileSizeWarning(file: File): { level: "warn" | "danger" | null; msg: string } {
+  const mb = file.size / (1024 * 1024);
+  const isXl = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
+  if (mb > 8) return { level: "danger", msg: `${mb.toFixed(1)} MB — very likely to fail (limit ~4.5 MB). Export as CSV to fix this.` };
+  if (mb > 4) return { level: "warn",   msg: `${mb.toFixed(1)} MB — near the 4.5 MB limit. ${isXl ? "Try exporting as CSV." : "May time out on large rows."}` };
+  if (mb > 2 && isXl) return { level: "warn", msg: `${mb.toFixed(1)} MB Excel — if it fails, re-export as CSV (much smaller).` };
+  return { level: null, msg: "" };
+}
+
+function eddmFmtSize(bytes: number) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function eddmFmtPhone(raw: string) {
+  const d = raw.replace(/\D/g, "");
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  return raw || "—";
+}
+
+function eddmFmtMoney(n: number) {
+  if (!isFinite(n) || n <= 0) return "—";
+  if (n >= 1000) return "$" + (n / 1000).toFixed(1) + "k";
+  return "$" + n.toFixed(2);
+}
+
+const EDDM_ACCEPT = ".csv,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
+
+// ─── EDDM Upload Card ─────────────────────────────────────────────────────────
+
+function EddmUploadCard({
+  label, sublabel, hint, icon, file, onFile, onClear, disabled, accent, accentSoft, required,
+}: {
+  label: string; sublabel: string; hint?: string; icon: string;
+  file: File | null; onFile: (f: File) => void; onClear: () => void;
+  disabled?: boolean; accent: string; accentSoft: string; required?: boolean;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const warn = file ? eddmFileSizeWarning(file) : { level: null as null, msg: "" };
+
+  const borderColor = !file ? (disabled ? "#cbd5e1" : C.border)
+    : warn.level === "danger" ? C.red
+    : warn.level === "warn"   ? C.amber
+    : accent;
+
+  const bgColor = !file ? (disabled ? "#f8fafc" : C.card)
+    : warn.level === "danger" ? C.redSoft
+    : warn.level === "warn"   ? C.amberSoft
+    : accentSoft;
+
+  return (
+    <div style={{ flex: 1, minWidth: 180, display: "flex", flexDirection: "column" }}>
+      <div
+        onClick={() => !disabled && !file && ref.current?.click()}
+        style={{
+          background: bgColor,
+          border: `2px ${file ? "solid" : "dashed"} ${borderColor}`,
+          borderRadius: warn.level && file ? "12px 12px 0 0" : 12,
+          padding: "20px 16px",
+          cursor: disabled ? "not-allowed" : file ? "default" : "pointer",
+          transition: "all 0.18s",
+          opacity: disabled ? 0.5 : 1,
+          position: "relative",
+          display: "flex", flexDirection: "column", alignItems: "center",
+          gap: 8, textAlign: "center",
+        }}
+      >
+        {required && !file && (
+          <span style={{
+            position: "absolute", top: 8, right: 10,
+            fontSize: 9, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase",
+            color: accent, background: accentSoft, padding: "2px 7px", borderRadius: 20,
+          }}>Required</span>
+        )}
+
+        {/* Icon bubble */}
+        <div style={{
+          width: 44, height: 44, borderRadius: 11, fontSize: 20,
+          background: file
+            ? warn.level === "danger" ? "#fee2e240" : warn.level === "warn" ? "#fef3c740" : accent + "25"
+            : disabled ? "#e2e8f0" : accentSoft,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>{icon}</div>
+
+        {file ? (
+          <>
+            <div>
+              <p style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 2, wordBreak: "break-all", lineHeight: 1.3 }}>
+                {file.name}
+              </p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 11, color: C.textSec }}>
+                <span style={{
+                  display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                  background: warn.level === "danger" ? C.red : warn.level === "warn" ? C.amber : C.green,
+                }} />
+                {eddmFmtSize(file.size)} · {file.name.split(".").pop()?.toUpperCase()}
+              </div>
+            </div>
+            <button
+              onClick={e => { e.stopPropagation(); onClear(); }}
+              style={{
+                fontSize: 11, color: C.red, background: C.redSoft, border: "none",
+                borderRadius: 7, padding: "4px 12px", cursor: "pointer", fontWeight: 600,
+              }}
+            >Remove</button>
+          </>
+        ) : (
+          <>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 600, color: disabled ? C.textMuted : C.text, marginBottom: 2 }}>{label}</p>
+              <p style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.4 }}>
+                {disabled ? "Locked — clear other region first" : sublabel}
+              </p>
+            </div>
+            {!disabled && hint && (
+              <p style={{ fontSize: 10, color: C.textMuted }}>{hint}</p>
+            )}
+          </>
+        )}
+
+        <input
+          ref={ref} type="file" accept={EDDM_ACCEPT} style={{ display: "none" }}
+          onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }}
+        />
+      </div>
+
+      {/* Warning banner — attached below card */}
+      {file && warn.level && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 8,
+          padding: "9px 13px",
+          background: warn.level === "danger" ? "#fef2f2" : "#fffbeb",
+          border: `1px solid ${warn.level === "danger" ? "#fecaca" : "#fde68a"}`,
+          borderTop: "none", borderRadius: "0 0 12px 12px",
+        }}>
+          <span style={{ fontSize: 13, flexShrink: 0, marginTop: 1 }}>{warn.level === "danger" ? "🚫" : "⚠️"}</span>
+          <p style={{
+            fontSize: 11, lineHeight: 1.5, fontWeight: 500,
+            color: warn.level === "danger" ? "#991b1b" : "#92400e",
+          }}>{warn.msg}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -337,6 +514,16 @@ export default function Home() {
   const [uploadingAsset, setUploadingAsset] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // EDDM CAC state
+  const [eddmCallrailFile, setEddmCallrailFile] = useState<File | null>(null);
+  const [eddmFloridaFile,  setEddmFloridaFile]  = useState<File | null>(null);
+  const [eddmGeorgiaFile,  setEddmGeorgiaFile]  = useState<File | null>(null);
+  const [eddmLoading,      setEddmLoading]      = useState(false);
+  const [eddmError,        setEddmError]        = useState<string | null>(null);
+  const [eddmResponse,     setEddmResponse]     = useState<EddmResponse | null>(null);
+  const [eddmExpanded,     setEddmExpanded]     = useState<Set<string>>(new Set());
+  const [eddmSpends,       setEddmSpends]       = useState<Record<string, string>>({});
 
   // Relative time ticker
   useEffect(() => {
@@ -742,8 +929,9 @@ export default function Home() {
           {/* Tab nav */}
           <nav style={{ display: "flex", gap: 2, flex: 1 }}>
             {([
-              { key: "cac", label: "CAC Dashboard" },
-              { key: "ads", label: "Ad Management" },
+              { key: "cac",  label: "CAC Dashboard" },
+              { key: "ads",  label: "Ad Management" },
+              { key: "eddm", label: "📮 EDDM CAC" },
             ] as { key: Tab; label: string }[]).map(t => (
               <button key={t.key} onClick={() => setTab(t.key)}
                 style={{
@@ -1473,6 +1661,259 @@ export default function Home() {
             )}
           </>
         )}
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* EDDM CAC TAB                                                       */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {tab === "eddm" && (() => {
+          const clientFile   = eddmFloridaFile ?? eddmGeorgiaFile;
+          const clientRegion = eddmFloridaFile ? "florida" : eddmGeorgiaFile ? "georgia" : null;
+          const canSubmit    = !!eddmCallrailFile && !!clientFile && !eddmLoading;
+
+          async function handleEddmSubmit() {
+            if (!canSubmit) return;
+            setEddmLoading(true);
+            setEddmError(null);
+            setEddmResponse(null);
+            setEddmExpanded(new Set());
+            setEddmSpends({});
+            try {
+              const fd = new FormData();
+              fd.append("callrail", eddmCallrailFile!);
+              fd.append("clients",  clientFile!);
+              fd.append("region",   clientRegion!);
+              const res  = await fetch("/api/eddm-match", { method: "POST", body: fd });
+              const data = await res.json() as EddmResponse;
+              if (!res.ok || data.error) setEddmError(data.error ?? "Something went wrong.");
+              else setEddmResponse(data);
+            } catch { setEddmError("Network error. Check your connection and try again."); }
+            finally  { setEddmLoading(false); }
+          }
+
+          function toggleEddm(key: string) {
+            setEddmExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+          }
+
+          const totalSpend  = eddmResponse ? eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0), 0) : 0;
+          const overallCAC  = totalSpend > 0 && (eddmResponse?.totalMatched ?? 0) > 0 ? totalSpend / eddmResponse!.totalMatched : null;
+
+          return (
+            <>
+              {/* ── Header ──────────────────────────────────────────────── */}
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>EDDM CAC</h1>
+                  <p style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>
+                    Upload CallRail data + Service Autopilot client list to calculate cost per acquisition per flyer
+                  </p>
+                </div>
+                {eddmResponse && (
+                  <button
+                    onClick={() => { setEddmResponse(null); setEddmCallrailFile(null); setEddmFloridaFile(null); setEddmGeorgiaFile(null); }}
+                    style={{ fontSize: 12, fontWeight: 600, color: C.textSec, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}
+                  >
+                    ↩ New Analysis
+                  </button>
+                )}
+              </div>
+
+              {/* ── Upload Section ──────────────────────────────────────── */}
+              {!eddmResponse && (
+                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: "24px", boxShadow: C.shadow }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 4 }}>Step 1 — Upload Files</p>
+                  <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 20 }}>
+                    Upload your CallRail export and either the Florida <em>or</em> Georgia client list from Service Autopilot. Both CSV and Excel are supported.
+                  </p>
+
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <EddmUploadCard
+                      label="CallRail Data" sublabel="Export from CallRail dashboard" hint="CSV or Excel (.xlsx)" icon="📞"
+                      file={eddmCallrailFile} onFile={setEddmCallrailFile} onClear={() => setEddmCallrailFile(null)}
+                      accent={C.blue} accentSoft={C.blueSoft} required
+                    />
+                    <EddmUploadCard
+                      label="Florida Clients" sublabel="Service Autopilot FL export" hint="CSV or Excel (.xlsx)" icon="🌴"
+                      file={eddmFloridaFile} onFile={setEddmFloridaFile} onClear={() => setEddmFloridaFile(null)}
+                      disabled={!!eddmGeorgiaFile} accent={C.orange} accentSoft={C.orangeSoft}
+                    />
+                    <EddmUploadCard
+                      label="Georgia Clients" sublabel="Service Autopilot GA export" hint="CSV or Excel (.xlsx)" icon="🍑"
+                      file={eddmGeorgiaFile} onFile={setEddmGeorgiaFile} onClear={() => setEddmGeorgiaFile(null)}
+                      disabled={!!eddmFloridaFile} accent={C.green} accentSoft={C.greenSoft}
+                    />
+                  </div>
+
+                  {/* Region lock notice */}
+                  {clientRegion && (
+                    <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 12 }}>{clientRegion === "florida" ? "🌴" : "🍑"}</span>
+                      <p style={{ fontSize: 12, fontWeight: 600, color: clientRegion === "florida" ? C.orange : C.green }}>
+                        {clientRegion === "florida" ? "Florida" : "Georgia"} client list loaded —&nbsp;
+                        <span style={{ color: C.textMuted, fontWeight: 400 }}>
+                          {clientRegion === "florida" ? "Georgia" : "Florida"} upload locked until removed
+                        </span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Step 2 — CTA */}
+                  <div style={{ marginTop: 24, paddingTop: 20, borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                    <p style={{ fontSize: 12, color: C.textMuted }}>
+                      {!eddmCallrailFile && !clientFile ? "Upload CallRail data and a client list to continue" :
+                       !eddmCallrailFile ? "Still need: CallRail export" :
+                       !clientFile ? "Still need: Florida or Georgia client list" :
+                       "Ready — click Find CAC to match calls to clients"}
+                    </p>
+                    <button
+                      onClick={handleEddmSubmit}
+                      disabled={!canSubmit}
+                      style={{
+                        background: canSubmit ? `linear-gradient(135deg, ${C.purple}, #6d28d9)` : "#e2e8f0",
+                        color: canSubmit ? "#fff" : C.textMuted,
+                        border: "none", borderRadius: 10,
+                        padding: "11px 28px", fontSize: 14, fontWeight: 700,
+                        cursor: canSubmit ? "pointer" : "not-allowed",
+                        display: "flex", alignItems: "center", gap: 8,
+                        boxShadow: canSubmit ? "0 4px 14px rgba(124,58,237,0.35)" : "none",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      {eddmLoading
+                        ? <><svg style={{ width: 16, height: 16 }} className="animate-spin" fill="none" viewBox="0 0 24 24"><circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="#fff" strokeWidth="4"/><path style={{ opacity: 0.75 }} fill="#fff" d="M4 12a8 8 0 018-8v8H4z"/></svg>Matching…</>
+                        : "Find CAC"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Error ───────────────────────────────────────────────── */}
+              {eddmError && (
+                <div style={{ background: C.redSoft, border: `1px solid ${C.red}30`, borderRadius: 12, padding: "13px 16px", fontSize: 13, color: C.red, fontWeight: 500 }}>
+                  {eddmError}
+                </div>
+              )}
+
+              {/* ── Results ─────────────────────────────────────────────── */}
+              {eddmResponse && (
+                <>
+                  {/* Summary stat cards */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+                    {([
+                      { label: "Total Calls",     value: eddmResponse.totalCalls.toLocaleString(),    icon: "📞", color: C.blue,   soft: C.blueSoft },
+                      { label: "Clients in SA",   value: eddmResponse.saClientsRead.toLocaleString(), icon: "👥", color: C.purple, soft: C.purpleSoft },
+                      { label: "Conversions",     value: eddmResponse.totalMatched.toLocaleString(),  icon: "✅", color: C.green,  soft: C.greenSoft },
+                      { label: "Overall CAC",     value: overallCAC ? eddmFmtMoney(overallCAC) : "Add spend ↓", icon: "💰", color: C.amber, soft: C.amberSoft },
+                    ] as const).map(m => (
+                      <div key={m.label} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "18px 16px", boxShadow: C.shadow, position: "relative", overflow: "hidden" }}>
+                        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: m.color }} />
+                        <div style={{ width: 32, height: 32, borderRadius: 8, background: m.soft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, marginBottom: 10 }}>{m.icon}</div>
+                        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 4 }}>{m.label}</p>
+                        <p style={{ fontSize: 22, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>{m.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Flyer cards */}
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>
+                      Results by Flyer &nbsp;<span style={{ fontWeight: 400, color: C.textMuted }}>— sorted by conversions</span>
+                    </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {eddmResponse.results.map(flyer => {
+                        const key      = flyer.flyerName + flyer.trackingNumber;
+                        const isOpen   = eddmExpanded.has(key);
+                        const spend    = parseFloat(eddmSpends[key] ?? "") || 0;
+                        const cac      = spend > 0 && flyer.conversions > 0 ? spend / flyer.conversions : null;
+                        const convRate = flyer.totalCalls > 0 ? ((flyer.conversions / flyer.totalCalls) * 100).toFixed(1) : "0.0";
+
+                        return (
+                          <div key={key} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: "hidden", boxShadow: C.shadow }}>
+                            <div style={{ padding: "18px 20px" }}>
+                              {/* Top row: name + pills */}
+                              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <p style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 3, lineHeight: 1.3 }}>{flyer.flyerName || "Unknown Flyer"}</p>
+                                  <p style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{eddmFmtPhone(flyer.trackingNumber)}</p>
+                                </div>
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                  <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: C.blueSoft, color: C.blue }}>{flyer.totalCalls} calls</span>
+                                  <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: flyer.conversions > 0 ? C.greenSoft : "#f1f5f9", color: flyer.conversions > 0 ? C.green : C.textMuted }}>{flyer.conversions} converted</span>
+                                  <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: C.amberSoft, color: C.amber }}>{convRate}%</span>
+                                </div>
+                              </div>
+
+                              {/* Bottom row: spend input + CAC + view clients */}
+                              <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}`, flexWrap: "wrap" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <label style={{ fontSize: 12, fontWeight: 600, color: C.textSec, whiteSpace: "nowrap" }}>Flyer Spend</label>
+                                  <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                    <span style={{ position: "absolute", left: 9, fontSize: 12, color: C.textMuted, fontWeight: 600 }}>$</span>
+                                    <input
+                                      type="number" min="0" step="0.01" placeholder="0.00"
+                                      value={eddmSpends[key] ?? ""}
+                                      onChange={e => setEddmSpends(p => ({ ...p, [key]: e.target.value }))}
+                                      style={{ width: 100, paddingLeft: 20, paddingRight: 8, paddingTop: 6, paddingBottom: 6, border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 12, color: C.text, background: C.bg, outline: "none" }}
+                                    />
+                                  </div>
+                                </div>
+
+                                {cac !== null && (
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ fontSize: 11, color: C.textSec, fontWeight: 600 }}>CAC</span>
+                                    <span style={{ fontSize: 20, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>{eddmFmtMoney(cac)}</span>
+                                    <span style={{ fontSize: 11, color: C.textMuted }}>/ client</span>
+                                  </div>
+                                )}
+
+                                {flyer.conversions > 0 && (
+                                  <button
+                                    onClick={() => toggleEddm(key)}
+                                    style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, color: C.blue, background: C.blueSoft, border: "none", borderRadius: 8, padding: "6px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+                                  >
+                                    {isOpen ? "Hide clients" : `View ${flyer.conversions} client${flyer.conversions !== 1 ? "s" : ""}`}
+                                    <span style={{ fontSize: 9, display: "inline-block", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Expanded client table */}
+                            {isOpen && flyer.matchedClients.length > 0 && (
+                              <div style={{ borderTop: `1px solid ${C.border}`, overflowX: "auto" }}>
+                                <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                                  <thead>
+                                    <tr style={{ background: "#f8fafc" }}>
+                                      {["#", "Name", "Matched Phone", "Cell", "Home", "Work", "Address"].map(h => (
+                                        <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMuted, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {flyer.matchedClients.map((client, i) => (
+                                      <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                        <td style={{ padding: "9px 16px", color: C.textMuted, fontWeight: 600 }}>{i + 1}</td>
+                                        <td style={{ padding: "9px 16px", fontWeight: 600, color: C.text, whiteSpace: "nowrap" }}>{client.name}</td>
+                                        <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.blue }}>{eddmFmtPhone(client.matchedPhone)}</td>
+                                        <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.cellPhone ? eddmFmtPhone(client.cellPhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
+                                        <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.homePhone ? eddmFmtPhone(client.homePhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
+                                        <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.workPhone ? eddmFmtPhone(client.workPhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
+                                        <td style={{ padding: "9px 16px", color: C.textSec, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{client.address || <span style={{ color: C.textMuted }}>—</span>}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })()}
 
         {/* Footer */}
         <footer style={{ textAlign: "center", fontSize: 11, color: C.textMuted, paddingBottom: 8 }}>
