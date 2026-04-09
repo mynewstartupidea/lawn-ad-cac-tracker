@@ -524,6 +524,7 @@ export default function Home() {
   const [eddmResponse,     setEddmResponse]     = useState<EddmResponse | null>(null);
   const [eddmExpanded,     setEddmExpanded]     = useState<Set<string>>(new Set());
   const [eddmSpends,       setEddmSpends]       = useState<Record<string, string>>({});
+  const [eddmReportOpen,   setEddmReportOpen]   = useState(false);
 
   // Relative time ticker
   useEffect(() => {
@@ -1920,6 +1921,216 @@ export default function Home() {
           Leads from GoHighLevel · Sales via Slack · Spend & metrics from Facebook Ads Manager
         </footer>
       </main>
+
+      {/* ── EDDM Report sticky bar + full-screen modal ───────────────────── */}
+      {(() => {
+        if (!eddmResponse) return null;
+        const anySpend     = Object.values(eddmSpends).some(v => parseFloat(v) > 0);
+        const totalSpend   = eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0), 0);
+        const overallCAC   = totalSpend > 0 && eddmResponse.totalMatched > 0 ? totalSpend / eddmResponse.totalMatched : null;
+        const reportDate   = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+
+        return (
+          <>
+            {/* Sticky bar — slides in when any spend is entered */}
+            <div style={{
+              position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 48,
+              transform: anySpend ? "translateY(0)" : "translateY(110%)",
+              transition: "transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)",
+              background: "linear-gradient(135deg, #1e1b4b, #312e81)",
+              borderTop: "1px solid rgba(255,255,255,0.1)",
+              padding: "14px 32px",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              gap: 16, flexWrap: "wrap",
+              boxShadow: "0 -4px 30px rgba(0,0,0,0.25)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.9)", letterSpacing: "-0.01em" }}>
+                  📊 EDDM Report Ready
+                </span>
+                <div style={{ display: "flex", gap: 16 }}>
+                  {[
+                    { label: "Total Spend", value: `$${totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+                    { label: "Conversions", value: eddmResponse.totalMatched.toString() },
+                    { label: "Overall CAC", value: overallCAC ? eddmFmtMoney(overallCAC) : "—" },
+                  ].map(s => (
+                    <div key={s.label}>
+                      <p style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 2 }}>{s.label}</p>
+                      <p style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{s.value}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={() => setEddmReportOpen(true)}
+                style={{
+                  background: "linear-gradient(135deg, #7c3aed, #6d28d9)",
+                  color: "#fff", border: "none", borderRadius: 10,
+                  padding: "11px 24px", fontSize: 14, fontWeight: 700,
+                  cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+                  boxShadow: "0 4px 16px rgba(124,58,237,0.5)",
+                  letterSpacing: "-0.01em",
+                }}
+              >
+                <svg width={16} height={16} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                View Report
+              </button>
+            </div>
+
+            {/* Full-screen report modal */}
+            {eddmReportOpen && (
+              <div style={{
+                position: "fixed", inset: 0, zIndex: 100,
+                background: "rgba(15,23,42,0.6)",
+                backdropFilter: "blur(4px)",
+                display: "flex", alignItems: "flex-start", justifyContent: "center",
+                padding: "24px 16px 100px",
+                overflowY: "auto",
+              }}
+                onClick={e => { if (e.target === e.currentTarget) setEddmReportOpen(false); }}
+              >
+                <div style={{
+                  background: C.card, borderRadius: 20, width: "100%", maxWidth: 900,
+                  boxShadow: "0 24px 80px rgba(0,0,0,0.35)",
+                  overflow: "hidden",
+                }}>
+                  {/* Report header */}
+                  <div style={{
+                    background: "linear-gradient(135deg, #1e1b4b, #312e81)",
+                    padding: "28px 32px",
+                    display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+                  }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                        <span style={{ fontSize: 24 }}>📮</span>
+                        <h2 style={{ fontSize: 22, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em" }}>EDDM CAC Report</h2>
+                      </div>
+                      <p style={{ fontSize: 13, color: "rgba(255,255,255,0.55)" }}>Generated {reportDate} · {eddmResponse.results.length} flyer{eddmResponse.results.length !== 1 ? "s" : ""} · {eddmResponse.totalCalls.toLocaleString()} calls</p>
+                    </div>
+                    <button
+                      onClick={() => setEddmReportOpen(false)}
+                      style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 8, padding: "8px 10px", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center" }}
+                    >
+                      <svg width={16} height={16} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+
+                  {/* Summary strip */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderBottom: `1px solid ${C.border}` }}>
+                    {[
+                      { label: "Total Calls",   value: eddmResponse.totalCalls.toLocaleString(),    color: C.blue },
+                      { label: "Conversions",   value: eddmResponse.totalMatched.toLocaleString(),   color: C.green },
+                      { label: "Total Spend",   value: totalSpend > 0 ? `$${totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", color: C.purple },
+                      { label: "Overall CAC",   value: overallCAC ? eddmFmtMoney(overallCAC) : "—",  color: C.amber },
+                    ].map((s, i) => (
+                      <div key={s.label} style={{
+                        padding: "20px 24px",
+                        borderRight: i < 3 ? `1px solid ${C.border}` : "none",
+                      }}>
+                        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 6 }}>{s.label}</p>
+                        <p style={{ fontSize: 24, fontWeight: 800, color: s.color, letterSpacing: "-0.02em" }}>{s.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* CAC formula callout */}
+                  <div style={{ padding: "16px 32px", background: C.purpleSoft, borderBottom: `1px solid #e9d5ff` }}>
+                    <p style={{ fontSize: 12, color: C.purple, fontWeight: 600 }}>
+                      CAC Formula: &nbsp;
+                      <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>
+                        Ad Spend ÷ Number of Clients
+                      </span>
+                      &nbsp;— Flyers without spend show "—" and are still included in the report.
+                    </p>
+                  </div>
+
+                  {/* Report table */}
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc" }}>
+                          {["Flyer Name", "Tracking Number", "Total Calls", "Conversions", "Conv. Rate", "Ad Spend", "CAC"].map((h, i) => (
+                            <th key={h} style={{
+                              padding: "12px 20px", textAlign: i >= 2 ? "center" : "left",
+                              fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+                              textTransform: "uppercase", color: C.textMuted,
+                              borderBottom: `2px solid ${C.border}`, whiteSpace: "nowrap",
+                            }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {eddmResponse.results.map((flyer, i) => {
+                          const key      = flyer.flyerName + flyer.trackingNumber;
+                          const spend    = parseFloat(eddmSpends[key] ?? "") || 0;
+                          const cac      = spend > 0 && flyer.conversions > 0 ? spend / flyer.conversions : null;
+                          const convRate = flyer.totalCalls > 0 ? ((flyer.conversions / flyer.totalCalls) * 100).toFixed(1) : "0.0";
+                          const hasSpend = spend > 0;
+
+                          return (
+                            <tr key={key} style={{ borderBottom: `1px solid ${C.border}`, background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                              <td style={{ padding: "14px 20px", fontWeight: 600, color: C.text, maxWidth: 220 }}>
+                                {flyer.flyerName || "Unknown"}
+                              </td>
+                              <td style={{ padding: "14px 20px", fontFamily: "monospace", fontSize: 12, color: C.textSec }}>
+                                {eddmFmtPhone(flyer.trackingNumber)}
+                              </td>
+                              <td style={{ padding: "14px 20px", textAlign: "center", color: C.blue, fontWeight: 600 }}>
+                                {flyer.totalCalls.toLocaleString()}
+                              </td>
+                              <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                                <span style={{
+                                  display: "inline-block", padding: "3px 12px", borderRadius: 20,
+                                  fontSize: 12, fontWeight: 700,
+                                  background: flyer.conversions > 0 ? C.greenSoft : "#f1f5f9",
+                                  color: flyer.conversions > 0 ? C.green : C.textMuted,
+                                }}>{flyer.conversions}</span>
+                              </td>
+                              <td style={{ padding: "14px 20px", textAlign: "center", color: C.textSec, fontSize: 12 }}>
+                                {convRate}%
+                              </td>
+                              <td style={{ padding: "14px 20px", textAlign: "center", fontWeight: 600 }}>
+                                {hasSpend
+                                  ? <span style={{ color: C.purple }}>${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                  : <span style={{ color: C.textMuted, fontSize: 12 }}>No spend entered</span>}
+                              </td>
+                              <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                                {cac !== null
+                                  ? (
+                                    <span style={{
+                                      display: "inline-block", padding: "4px 14px", borderRadius: 20,
+                                      fontSize: 13, fontWeight: 800,
+                                      background: cac < 100 ? C.greenSoft : cac < 300 ? C.amberSoft : C.redSoft,
+                                      color:      cac < 100 ? C.green     : cac < 300 ? C.amber     : C.red,
+                                    }}>{eddmFmtMoney(cac)}</span>
+                                  )
+                                  : <span style={{ color: C.textMuted }}>—</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Report footer */}
+                  <div style={{ padding: "16px 32px", borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <p style={{ fontSize: 11, color: C.textMuted }}>
+                      CAC color: <span style={{ color: C.green, fontWeight: 600 }}>Green &lt; $100</span> · <span style={{ color: C.amber, fontWeight: 600 }}>Amber $100–$300</span> · <span style={{ color: C.red, fontWeight: 600 }}>Red &gt; $300</span>
+                    </p>
+                    <button
+                      onClick={() => setEddmReportOpen(false)}
+                      style={{ fontSize: 12, fontWeight: 600, color: C.textSec, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 16px", cursor: "pointer" }}
+                    >Close</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {/* ── CAC AI Chat FAB + Overlay (fixed, always visible) ─────────────── */}
       {tab === "cac" && (
