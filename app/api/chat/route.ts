@@ -47,7 +47,7 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "get_campaign_insights",
-      description: "Get spend, impressions, clicks and CTR for a specific campaign",
+      description: "Get leads, cost per lead, spend, and other performance data for a specific campaign",
       parameters: {
         type: "object",
         properties: {
@@ -100,15 +100,26 @@ async function runTool(
 
   if (name === "get_campaign_insights") {
     const preset = args.date_preset || "last_30_days";
-    const fields = "spend,impressions,clicks,ctr,cpm,cpc,reach";
+    const fields = "spend,actions,cost_per_action_type,impressions,clicks,ctr,cpc";
     const res = await fetch(
       `${FB_BASE}/${args.campaign_id}/insights?fields=${fields}&date_preset=${preset}&access_token=${accessToken}`
     );
     const data = await res.json();
     if (data.error) return `Error: ${data.error.message}`;
     const ins = data.data?.[0];
-    if (!ins) return `No insights data found for "${args.campaign_name}".`;
-    return `"${args.campaign_name}" (${preset}): Spend=$${ins.spend}, Impressions=${ins.impressions}, Clicks=${ins.clicks}, CTR=${ins.ctr}%, CPM=$${ins.cpm}, CPC=$${ins.cpc}`;
+    if (!ins) return `No data for "${args.campaign_name}" in ${preset}.`;
+
+    // Extract lead count from actions
+    const actions = (ins.actions ?? []) as { action_type: string; value: string }[];
+    const leadAction = actions.find(a => a.action_type === "lead" || a.action_type === "offsite_conversion.fb_pixel_lead");
+    const leads = leadAction ? parseInt(leadAction.value) : 0;
+
+    // Extract cost per lead
+    const cpaList = (ins.cost_per_action_type ?? []) as { action_type: string; value: string }[];
+    const cplAction = cpaList.find(a => a.action_type === "lead" || a.action_type === "offsite_conversion.fb_pixel_lead");
+    const cpl = cplAction ? `$${parseFloat(cplAction.value).toFixed(2)}` : (leads > 0 ? `$${(parseFloat(ins.spend) / leads).toFixed(2)}` : "N/A");
+
+    return `"${args.campaign_name}" (${preset}): Leads=${leads}, Cost Per Lead=${cpl}, Spend=$${ins.spend}, Clicks=${ins.clicks}, CTR=${parseFloat(ins.ctr).toFixed(2)}%, CPC=$${parseFloat(ins.cpc).toFixed(2)}`;
   }
 
   return "Unknown tool.";
@@ -151,8 +162,8 @@ export async function POST(req: Request) {
     accessToken
       ? "You have live Facebook Ads API access via function calling. When a user asks about performance, ALWAYS call list_campaigns first to get all campaigns, then call get_campaign_insights for EACH campaign to build a complete picture before responding. Never answer performance questions with partial data."
       : "The Facebook Ads API is not connected (missing FACEBOOK_ACCESS_TOKEN). Provide advice only.",
-    "When asked how campaigns are doing: pull ALL campaigns, get insights for each one, then give a clear performance summary — which campaigns are killing it, which are bleeding money, what the blended CPC/CTR looks like, and your recommendation.",
-    "Key benchmarks for lawn care home services: Good CTR > 1.5%, Great CTR > 2.5%. Good CPC < $2.00, Great CPC < $1.00. CPM < $20 is healthy. Flag anything underperforming against these benchmarks.",
+    "When asked how campaigns are doing: call list_campaigns first, then call get_campaign_insights for EVERY campaign, then summarize. Lead count and cost per lead are the ONLY metrics that matter. Secondary context: spend and clicks.",
+    "Key benchmarks for lawn care home services: Target CPL under $30 is good, under $20 is great, over $50 is bleeding money. Flag campaigns with zero leads as dead weight. Always state total leads across all campaigns and blended CPL.",
     "When pausing or resuming campaigns, do it directly without asking for confirmation unless budget is above $200/day.",
     assets?.length
       ? `Available brand assets: ${assets.map(a => a.name).join(", ")}.`
