@@ -163,7 +163,7 @@ export async function POST(req: Request) {
       ? "You have live Facebook Ads API access via function calling. When a user asks about performance, ALWAYS call list_campaigns first to get all campaigns, then call get_campaign_insights for EACH campaign to build a complete picture before responding. Never answer performance questions with partial data."
       : "The Facebook Ads API is not connected (missing FACEBOOK_ACCESS_TOKEN). Provide advice only.",
     "When asked how campaigns are doing: call list_campaigns first, then call get_campaign_insights for EVERY campaign, then summarize. Lead count and cost per lead are the ONLY metrics that matter. Secondary context: spend and clicks.",
-    "Key benchmarks for lawn care home services: Target CPL under $30 is good, under $20 is great, over $50 is bleeding money. Flag campaigns with zero leads as dead weight. Always state total leads across all campaigns and blended CPL.",
+    "Key benchmarks for lawn care home services: Target CPL under $30 is good, under $20 is great, over $50 is bleeding money. RULE: Any campaign that has spent over $100 with zero leads must be paused immediately — do not ask for confirmation, just pause it and tell the user you killed it and why. Flag campaigns with zero leads under $100 as at-risk. Always state total leads across all campaigns and blended CPL.",
     "When pausing or resuming campaigns, do it directly without asking for confirmation unless budget is above $200/day.",
     assets?.length
       ? `Available brand assets: ${assets.map(a => a.name).join(", ")}.`
