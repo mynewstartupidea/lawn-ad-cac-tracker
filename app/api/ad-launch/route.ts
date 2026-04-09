@@ -175,9 +175,11 @@ Full offer: ${ctx.offer}
 
 ━━━ DIRECT RESPONSE PSYCHOLOGY YOU MUST APPLY ━━━
 
-PRICE ANCHORING (mandatory when originalPrices exist):
-- Every crossed-out price MUST appear in the image
-- Show the price drop as a visual journey: "$499" slashed → "$99" slashed → "$19 NOW"
+PRICE ANCHORING (mandatory — use ONLY these exact prices, no others):
+${crossedPrices.length ? `- Crossed-out prices to show (in order, all with red strikethrough): ${crossedPrices.map(p => `"${p}"`).join(", ")}` : ""}
+- Current price (the HERO, must dominate the image): "${(ctx as { offerShort: string }).offerShort}"
+- Show the price drop as a visual journey: ${[...crossedPrices, (ctx as { offerShort: string }).offerShort].join(" → ")}
+- DO NOT invent or use any other prices — only the ones listed above
 - The current price must be 3-4x larger than the crossed-out prices
 - Crossed-out prices in faded red with thick diagonal strikethrough
 - Current price in explosive, celebration colors (bright yellow, lime green, or white with glow)
@@ -236,7 +238,7 @@ VISUAL HIERARCHY RULES:
 
 10. text_only_punch — Pure typography, no photo. Bold color-block background (deep green + white + yellow). Massive price, crossed-out prices, scarcity line. Feels like a sale sign. Works great for retargeting.
 
-11. deal_receipt — Designed to look like a receipt or invoice. Lists "Normal price: $499 ~~strikethrough~~", "Your price today: $19". Clean, specific, believable. Builds trust through specificity.
+11. deal_receipt — Designed to look like a receipt or invoice. Lists each original price with strikethrough, then "Your price today: [CURRENT_PRICE]". Clean, specific, believable. Builds trust through specificity.
 
 ━━━ RULES FOR WRITING THE imagePrompt ━━━
 
@@ -244,8 +246,8 @@ This prompt goes DIRECTLY to gpt-image-1, a state-of-the-art AI image model. It 
 
 - Describe every element's EXACT position (top-center, bottom-left third, etc.)
 - Describe font styles visually: "chunky inflated 3D bubble letters with yellow fill and black outline", "bold condensed all-caps impact-style font in white with red drop shadow"
-- Describe crossed-out prices EXACTLY: "bold red text '$499' with a thick horizontal red line through the middle, slightly faded", then "$99" same treatment
-- Describe the current price as the HERO: size, color, font, any graphic behind it
+- Describe crossed-out prices EXACTLY using ONLY the prices from the account data above — e.g. "bold red text '[CROSSED_PRICE]' with a thick horizontal red line through the middle, slightly faded"
+- Describe the current price "${(ctx as { offerShort: string }).offerShort}" as the HERO: size, color, font, any graphic behind it
 - Describe the scarcity line: smaller font, different style, where it sits
 - Describe background: color, texture, photo, gradients
 - End with: "professional Facebook ad creative, 1:1 square format, no watermarks, no logos, high contrast, mobile-readable text"
@@ -260,7 +262,9 @@ Return ONLY valid JSON:
       },
       {
         role: "user",
-        content: `Create the creative direction for this ad. Think like the best direct response creative director in the world. Every pixel should have a purpose. Make the price impossible to ignore. Make the scarcity feel real. Make it impossible NOT to click.`,
+        content: `Create the creative direction for this ad. Think like the best direct response creative director in the world. Every pixel should have a purpose. Make the price impossible to ignore. Make the scarcity feel real. Make it impossible NOT to click.
+
+CRITICAL: Use ONLY these prices — crossed out: ${crossedPrices.join(", ") || "none"} — current hero price: ${(ctx as { offerShort: string }).offerShort}. Do NOT use any other prices.`,
       },
     ],
     response_format: { type: "json_object" },
