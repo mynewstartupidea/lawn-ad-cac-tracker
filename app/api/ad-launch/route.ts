@@ -140,6 +140,74 @@ Ad Name: ${adCopy.ad_name}`,
   return JSON.parse(res.choices[0].message.content ?? "{}") as QualityResult;
 }
 
+// ─── Agent 3: Creative Director ──────────────────────────────────────────────
+
+interface CreativeDirection {
+  style: string;
+  imagePrompt: string;
+  rationale: string;
+}
+
+async function getCreativeDirection(
+  openai: OpenAI,
+  adCopy: AdCopy,
+  ctx: typeof AD_ACCOUNTS[AdAccount]
+): Promise<CreativeDirection> {
+  const crossedPrices = (ctx as { originalPrices?: readonly string[] }).originalPrices ?? [];
+  const priceHistory = crossedPrices.length
+    ? `Original prices (crossed out in image): ${crossedPrices.join(" → ")} → Current price: ${(ctx as { offerShort: string }).offerShort}`
+    : `Current price: ${(ctx as { offerShort: string }).offerShort}`;
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "system",
+        content: `You are a world-class Facebook ad creative director with 15+ years designing high-converting ads for home services. You think like a CMO and design like a senior graphic designer. You know what fonts, colors, and layouts stop the scroll and drive clicks.
+
+Brand: ${ctx.label} | Location: ${ctx.location}
+${priceHistory}
+Headline: ${adCopy.headline}
+Primary text hook: ${adCopy.primary_text.split("\n")[0]}
+
+STYLE LIBRARY — pick the single best style for this ad:
+1. price_bomb — Massive price reveal. Crossed-out old prices in red with bold strikethrough, current price in HUGE eye-catching font (chunky, playful, or explosive). Best when price is the main hook.
+2. split_screen — Perfect 50/50 split: left = dead patchy brown lawn, right = lush perfect emerald green. Price badge overlaid center. Best for transformation angle.
+3. bold_graphic — Flat graphic design, high contrast, childlike bubble font or graffiti-style lettering, neon or bold color pops. Scroll-stopper energy. Best for urgency/fun angle.
+4. urgency_countdown — Dark moody background, spotlight on lawn, bold condensed countdown-style typography, red + white + black palette. Limited time energy.
+5. aerial_hero — Drone shot of a perfect neighborhood lawn, clean elegant thin-serif or modern sans font, aspirational premium feel. Best for premium positioning.
+6. lifestyle_warmth — Family/homeowner enjoying a beautiful lawn, golden hour warmth, playful handwritten font, emotional connection angle.
+7. before_after_badge — Side-by-side before/after with a bold starburst price badge in the corner. Classic direct response.
+8. social_proof_street — Street-level view of multiple perfect lawns on a neighborhood block, subtle branding, "Your neighbors already did it" energy.
+
+RULES for writing the imagePrompt:
+- This prompt goes directly to gpt-image-1, an AI image model — be extremely specific and visual
+- If there are crossed-out prices: describe EXACTLY how they look (e.g. "bold red text '$499' with a thick diagonal red line crossing it out, below it '$99' also crossed out in red, then MASSIVE bright yellow chunky bubble font '$19 TODAY' with a green starburst explosion behind it")
+- Specify exact font styles by describing them visually (e.g. "chunky 3D bubble letters", "bold condensed black impact-style font", "playful thick handwritten marker font", "elegant thin white serif")
+- Specify colors explicitly — background, text colors, accent colors
+- Specify composition — where elements are placed, what dominates
+- Include: no watermarks, no logos, professional ad creative, 1:1 square format, Facebook ad
+- Make it feel designed, not photographed — unless aerial_hero or lifestyle styles
+- The image should be HIGH CONVERTING — price must POP, visual hierarchy must be clear
+
+Return ONLY valid JSON:
+{
+  "style": "style_name",
+  "imagePrompt": "full detailed prompt for gpt-image-1",
+  "rationale": "1 sentence on why this style fits this ad"
+}`,
+      },
+      {
+        role: "user",
+        content: `Write the creative direction for this ad. Make the image design agency-quality. The price must dominate. Be specific about every visual element.`,
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  return JSON.parse(res.choices[0].message.content ?? "{}") as CreativeDirection;
+}
+
 // ─── Image quality selection ──────────────────────────────────────────────────
 
 const HIGH_QUALITY_KEYWORDS = ["premium", "best", "launch", "hero", "flagship", "high quality", "top", "featured"];
@@ -400,6 +468,10 @@ export async function POST(req: Request) {
     log.finalQuality = quality;
     log.qualityGood  = isQualityGood(quality);
 
+    // Agent 3: Creative Director — generates image concept with price psychology + font direction
+    const creative = await getCreativeDirection(openai, adCopy, ctx);
+    log.creativeDirection = creative;
+
     // Generate image via gpt-image-1 — quality auto-selected based on copy score + instruction
     const imageQuality = selectImageQuality(quality, instruction);
     log.imageQuality = imageQuality;
@@ -408,7 +480,7 @@ export async function POST(req: Request) {
     let imageHash = "";
     try {
       if (!falKey) throw new Error("FAL_API_KEY not configured");
-      imageUrl     = await generateImage(adCopy.image_prompt, falKey, imageQuality);
+      imageUrl     = await generateImage(creative.imagePrompt, falKey, imageQuality);
       log.imageUrl = imageUrl;
       // Try uploading AI image to Facebook
       try {
