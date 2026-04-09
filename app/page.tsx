@@ -1705,7 +1705,13 @@ export default function Home() {
           }
 
           const totalSpend  = eddmResponse ? eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0), 0) : 0;
-          const overallCAC  = totalSpend > 0 && (eddmResponse?.totalMatched ?? 0) > 0 ? totalSpend / eddmResponse!.totalMatched : null;
+          // Only count conversions from flyers that have spend entered — mixing
+          // no-spend channels (e.g. Google My Business) into the denominator
+          // would dilute the CAC and give a falsely low number.
+          const paidConversions = eddmResponse
+            ? eddmResponse.results.filter(r => (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0) > 0).reduce((s, r) => s + r.conversions, 0)
+            : 0;
+          const overallCAC  = totalSpend > 0 && paidConversions > 0 ? totalSpend / paidConversions : null;
 
           return (
             <>
@@ -1934,9 +1940,10 @@ export default function Home() {
       {/* ── EDDM Report sticky bar + full-screen modal ───────────────────── */}
       {(() => {
         if (!eddmResponse) return null;
-        const anySpend     = Object.values(eddmSpends).some(v => parseFloat(v) > 0);
-        const totalSpend   = eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0), 0);
-        const overallCAC   = totalSpend > 0 && eddmResponse.totalMatched > 0 ? totalSpend / eddmResponse.totalMatched : null;
+        const anySpend        = Object.values(eddmSpends).some(v => parseFloat(v) > 0);
+        const totalSpend      = eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0), 0);
+        const paidConversions = eddmResponse.results.filter(r => (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0) > 0).reduce((s, r) => s + r.conversions, 0);
+        const overallCAC      = totalSpend > 0 && paidConversions > 0 ? totalSpend / paidConversions : null;
         const reportDate   = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
         return (

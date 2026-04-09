@@ -92,8 +92,12 @@ export async function POST(req: Request) {
     }
 
     // ── Build phone → client map from Service Autopilot export ───────────────
-    // Each client can have up to 3 phone numbers — index all of them
-    const phoneMap = new Map<string, SAClient>();
+    // A client can have up to 3 phone numbers (cell, home, work).
+    // We assign each client a canonical ID (their first non-empty phone) so that
+    // if the same person calls from two different registered numbers they are
+    // counted as ONE conversion, not two.
+    const phoneToCanonical = new Map<string, string>();   // any phone → canonical phone
+    const canonicalToClient = new Map<string, SAClient>(); // canonical phone → client
 
     for (const row of saRows) {
       const firstName = col(row, "FirstNam", "First Name", "FirstName", "first_name");
@@ -111,18 +115,29 @@ export async function POST(req: Request) {
         col(row, "PhysicalZ", "Physical Zip",    "Zip", "ZipCode"),
       ].filter(Boolean).join(", ");
 
-      const base: Omit<SAClient, "matchedPhone"> = {
-        name: name || "Unknown",
-        homePhone,
-        workPhone,
-        cellPhone,
-        address,
-      };
+      // Collect all valid phones for this client (cell first = highest priority)
+      const phones = [cellPhone, homePhone, workPhone].filter(p => p.length >= 10);
+      if (phones.length === 0) continue;
 
-      // Register all non-empty phone numbers — first-write wins for duplicates
-      for (const phone of [cellPhone, homePhone, workPhone]) {
-        if (phone.length >= 10 && !phoneMap.has(phone)) {
-          phoneMap.set(phone, { ...base, matchedPhone: phone });
+      // First phone becomes this client's canonical identity
+      const canonical = phones[0];
+
+      if (!canonicalToClient.has(canonical)) {
+        canonicalToClient.set(canonical, {
+          name: name || "Unknown",
+          matchedPhone: canonical,
+          homePhone,
+          workPhone,
+          cellPhone,
+          address,
+        });
+      }
+
+      // Map every phone for this client to their canonical ID
+      // (first-write wins handles two different clients sharing a number)
+      for (const phone of phones) {
+        if (!phoneToCanonical.has(phone)) {
+          phoneToCanonical.set(phone, canonical);
         }
       }
     }
@@ -132,8 +147,7 @@ export async function POST(req: Request) {
       flyerName: string;
       trackingNumber: string;
       callerPhone: string;
-      startTime: string;
-      duration: number;
+      canonical: string | null;   // canonical client ID if matched
       client: SAClient | null;
     }
 
@@ -141,18 +155,20 @@ export async function POST(req: Request) {
       const callerPhone = normalizePhone(
         col(row, "Phone Number", "PhoneNumber", "Caller Number", "CallerNumber", "caller_phone")
       );
+      const canonical = callerPhone ? (phoneToCanonical.get(callerPhone) ?? null) : null;
+      const client    = canonical ? (canonicalToClient.get(canonical) ?? null) : null;
       return {
-        flyerName:       col(row, "Number Name", "NumberName", "Tracking Name", "TrackingName", "Campaign"),
-        trackingNumber:  col(row, "Tracking Number", "TrackingNumber", "Tracking #", "tracking_number"),
+        flyerName:      col(row, "Number Name", "NumberName", "Tracking Name", "TrackingName", "Campaign"),
+        trackingNumber: col(row, "Tracking Number", "TrackingNumber", "Tracking #", "tracking_number"),
         callerPhone,
-        startTime:       col(row, "Start Time", "StartTime", "Date", "Call Date"),
-        duration:        parseInt(col(row, "Duration (seconds)", "Duration", "DurationSeconds") || "0") || 0,
-        client:          callerPhone ? (phoneMap.get(callerPhone) ?? null) : null,
+        canonical,
+        // Store the actual phone they called from so the UI can display it
+        client: client ? { ...client, matchedPhone: callerPhone } : null,
       };
     });
 
     // ── Group by flyer (Number Name + Tracking Number) ───────────────────────
-    const flyerMap = new Map<string, FlyerResult & { seenPhones: Set<string> }>();
+    const flyerMap = new Map<string, FlyerResult & { seenCanonicals: Set<string> }>();
 
     for (const call of calls) {
       const key = `${call.flyerName}||${call.trackingNumber}`;
@@ -163,16 +179,17 @@ export async function POST(req: Request) {
           totalCalls:     0,
           conversions:    0,
           matchedClients: [],
-          seenPhones:     new Set(),
+          seenCanonicals: new Set(),
         });
       }
 
       const flyer = flyerMap.get(key)!;
       flyer.totalCalls++;
 
-      // Deduplicate clients — same person may call multiple times
-      if (call.client && !flyer.seenPhones.has(call.client.matchedPhone)) {
-        flyer.seenPhones.add(call.client.matchedPhone);
+      // Deduplicate by canonical client ID — if same person calls from cell AND home
+      // phone, they still count as exactly 1 conversion for this flyer.
+      if (call.client && call.canonical && !flyer.seenCanonicals.has(call.canonical)) {
+        flyer.seenCanonicals.add(call.canonical);
         flyer.matchedClients.push(call.client);
         flyer.conversions++;
       }
@@ -180,7 +197,7 @@ export async function POST(req: Request) {
 
     // ── Build final results ──────────────────────────────────────────────────
     const results: FlyerResult[] = Array.from(flyerMap.values())
-      .map(({ seenPhones: _s, ...rest }) => rest)   // strip the Set before JSON
+      .map(({ seenCanonicals: _s, ...rest }) => rest)   // strip the Set before JSON
       .sort((a, b) => b.conversions - a.conversions || b.totalCalls - a.totalCalls);
 
     const totalCalls    = calls.length;
