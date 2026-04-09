@@ -1704,12 +1704,12 @@ export default function Home() {
             setEddmExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
           }
 
-          const totalSpend  = eddmResponse ? eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0), 0) : 0;
+          const totalSpend  = eddmResponse ? eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + "||" + r.trackingNumber] ?? "") || 0), 0) : 0;
           // Only count conversions from flyers that have spend entered — mixing
           // no-spend channels (e.g. Google My Business) into the denominator
           // would dilute the CAC and give a falsely low number.
           const paidConversions = eddmResponse
-            ? eddmResponse.results.filter(r => (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0) > 0).reduce((s, r) => s + r.conversions, 0)
+            ? eddmResponse.results.filter(r => (parseFloat(eddmSpends[r.flyerName + "||" + r.trackingNumber] ?? "") || 0) > 0).reduce((s, r) => s + r.conversions, 0)
             : 0;
           const overallCAC  = totalSpend > 0 && paidConversions > 0 ? totalSpend / paidConversions : null;
 
@@ -1836,7 +1836,7 @@ export default function Home() {
                     </p>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       {eddmResponse.results.map(flyer => {
-                        const key      = flyer.flyerName + flyer.trackingNumber;
+                        const key      = flyer.flyerName + "||" + flyer.trackingNumber;
                         const isOpen   = eddmExpanded.has(key);
                         const spend    = parseFloat(eddmSpends[key] ?? "") || 0;
                         const cac      = spend > 0 && flyer.conversions > 0 ? spend / flyer.conversions : null;
@@ -1941,8 +1941,8 @@ export default function Home() {
       {(() => {
         if (!eddmResponse) return null;
         const anySpend        = Object.values(eddmSpends).some(v => parseFloat(v) > 0);
-        const totalSpend      = eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0), 0);
-        const paidConversions = eddmResponse.results.filter(r => (parseFloat(eddmSpends[r.flyerName + r.trackingNumber] ?? "") || 0) > 0).reduce((s, r) => s + r.conversions, 0);
+        const totalSpend      = eddmResponse.results.reduce((s, r) => s + (parseFloat(eddmSpends[r.flyerName + "||" + r.trackingNumber] ?? "") || 0), 0);
+        const paidConversions = eddmResponse.results.filter(r => (parseFloat(eddmSpends[r.flyerName + "||" + r.trackingNumber] ?? "") || 0) > 0).reduce((s, r) => s + r.conversions, 0);
         const overallCAC      = totalSpend > 0 && paidConversions > 0 ? totalSpend / paidConversions : null;
         const reportDate   = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
@@ -2064,11 +2064,11 @@ export default function Home() {
 
                   {/* Report table — spend rows first, no-spend (profiles) at bottom */}
                   {(() => {
-                    const withSpend    = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + f.trackingNumber] ?? "") || 0) > 0);
-                    const withoutSpend = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + f.trackingNumber] ?? "") || 0) === 0);
+                    const withSpend    = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0);
+                    const withoutSpend = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) === 0);
 
                     const renderRow = (flyer: EddmFlyer, i: number, dimmed?: boolean) => {
-                      const key      = flyer.flyerName + flyer.trackingNumber;
+                      const key      = flyer.flyerName + "||" + flyer.trackingNumber;
                       const spend    = parseFloat(eddmSpends[key] ?? "") || 0;
                       const cac      = spend > 0 && flyer.conversions > 0 ? spend / flyer.conversions : null;
                       const convRate = flyer.totalCalls > 0 ? ((flyer.conversions / flyer.totalCalls) * 100).toFixed(1) : "0.0";
@@ -2196,7 +2196,7 @@ export default function Home() {
                   const digits = rawNum.replace(/\D/g, "");
                   const flyer = eddmResponse!.results.find(f => f.trackingNumber.replace(/\D/g, "") === digits);
                   if (flyer) {
-                    const key = flyer.flyerName + flyer.trackingNumber;
+                    const key = flyer.flyerName + "||" + flyer.trackingNumber;
                     next[key] = amount > 0 ? String(amount) : "";
                   }
                 }
