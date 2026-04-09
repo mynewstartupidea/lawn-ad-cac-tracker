@@ -150,27 +150,33 @@ function selectImageQuality(quality: QualityResult, instruction: string): "mediu
   return isHighIntent || isExceptionalCopy ? "high" : "medium";
 }
 
-// ─── gpt-image-1 Image Generation ────────────────────────────────────────────
+// ─── gpt-image-1 Image Generation (via fal.ai) ───────────────────────────────
 
 async function generateImage(
   prompt: string,
-  openai: OpenAI,
+  falKey: string,
   imageQuality: "medium" | "high"
 ): Promise<string> {
   const enhancedPrompt = `${prompt}. DSLR photography, Canon 5D, 85mm lens, golden hour soft warm sunlight, perfectly manicured thick lush emerald green St. Augustine grass, healthy uniform lawn, suburban home curb appeal, no people, no text, no watermarks, no logos, photorealistic, sharp focus, square 1:1 composition`;
 
-  const response = await openai.images.generate({
-    model: "gpt-image-1",
-    prompt: enhancedPrompt,
-    size: "1024x1024",
-    quality: imageQuality,
-    n: 1,
+  const res = await fetch("https://fal.run/fal-ai/gpt-image-1/text-to-image", {
+    method: "POST",
+    headers: {
+      Authorization: `Key ${falKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt: enhancedPrompt,
+      image_size: "1024x1024",
+      quality: imageQuality,
+      num_images: 1,
+      output_format: "jpeg",
+    }),
   });
 
-  const image = response.data[0];
-  if (image.url) return image.url;
-  if (image.b64_json) return `data:image/png;base64,${image.b64_json}`;
-  throw new Error("gpt-image-1: no image returned");
+  const data = await res.json();
+  if (!data.images?.[0]?.url) throw new Error(`fal gpt-image-1 error: ${JSON.stringify(data)}`);
+  return data.images[0].url as string;
 }
 
 // ─── Upload image hash to Facebook ───────────────────────────────────────────
@@ -352,6 +358,7 @@ async function createFacebookCampaign(
 export async function POST(req: Request) {
   const openaiKey = process.env.OPENAI_API_KEY;
   const fbToken   = process.env.FACEBOOK_ACCESS_TOKEN;
+  const falKey    = process.env.FAL_API_KEY;
 
   if (!openaiKey) return NextResponse.json({ error: "OPENAI_API_KEY not configured" }, { status: 400 });
   if (!fbToken)   return NextResponse.json({ error: "FACEBOOK_ACCESS_TOKEN not configured" }, { status: 400 });
@@ -400,7 +407,8 @@ export async function POST(req: Request) {
     let imageUrl  = "";
     let imageHash = "";
     try {
-      imageUrl     = await generateImage(adCopy.image_prompt, openai, imageQuality);
+      if (!falKey) throw new Error("FAL_API_KEY not configured");
+      imageUrl     = await generateImage(adCopy.image_prompt, falKey, imageQuality);
       log.imageUrl = imageUrl;
       // Try uploading AI image to Facebook
       try {
