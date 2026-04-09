@@ -530,11 +530,14 @@ export default function Home() {
   const [eddmReportTab,    setEddmReportTab]    = useState<"flyer" | "flyer-zip" | "overall-zip">("flyer");
   const [eddmChatOpen,     setEddmChatOpen]     = useState(false);
   const [eddmChatMessages, setEddmChatMessages] = useState<{ id: string; role: "user" | "assistant"; content: string; image?: string; ts: Date }[]>([
-    { id: "eddm-welcome", role: "assistant", content: "Hi! Paste your flyer spend data, describe it, or attach a screenshot and I'll fill in the amounts automatically. You can also say things like \"set spend for 478-217-7161 to $2500\" or \"remove spend for the Georgia flyer\".", ts: new Date() },
+    { id: "eddm-welcome", role: "assistant", content: "Hi! I handle three types of input:\n\n1️⃣ **Total spend** — paste or screenshot a billing summary with tracking numbers + amounts.\n\n2️⃣ **Zip cost snapshot** — share a table of zip codes and their cost per mailing.\n\n3️⃣ **Drop/reps snapshot** — share tracking numbers, their drops, which zips each drop covers, and how many times each drop was mailed. I'll combine this with the zip costs to calculate exact per-zip spend.\n\nShare either snapshot and I'll figure out the rest!", ts: new Date() },
   ]);
   const [eddmChatInput,   setEddmChatInput]   = useState("");
   const [eddmChatImg,     setEddmChatImg]     = useState<string | null>(null);
   const [eddmChatBusy,    setEddmChatBusy]    = useState(false);
+  // Actual zip-level spends from snapshot parsing: flyerKey → { "32601": 1350, ... }
+  // When present, used instead of proportional estimates in zip reports.
+  const [eddmZipSpends,   setEddmZipSpends]   = useState<Record<string, Record<string, number>>>({});
   const eddmChatEndRef = useRef<HTMLDivElement>(null);
   const eddmImgInputRef = useRef<HTMLInputElement>(null);
 
@@ -1924,40 +1927,69 @@ export default function Home() {
                               <div style={{ borderTop: `1px solid ${C.border}` }}>
                                 {/* Zip breakdown (only when toggle is on and flyer has spend) */}
                                 {eddmShowZip && spend > 0 && (() => {
-                                  const zipMap = new Map<string, number>();
+                                  const actualZips = eddmZipSpends[key];
+                                  const hasActual  = !!actualZips && Object.keys(actualZips).length > 0;
+
+                                  // Build zip→clients map from matched clients
+                                  const clientZipMap = new Map<string, number>();
                                   for (const c of flyer.matchedClients) {
                                     const z = c.zip || "Unknown";
-                                    zipMap.set(z, (zipMap.get(z) ?? 0) + 1);
+                                    clientZipMap.set(z, (clientZipMap.get(z) ?? 0) + 1);
                                   }
-                                  const zipRows = Array.from(zipMap.entries())
-                                    .sort((a, b) => b[1] - a[1]);
+
+                                  // Merge zip keys from both actual spends and client data
+                                  const allZips = new Set<string>([
+                                    ...Array.from(clientZipMap.keys()),
+                                    ...(hasActual ? Object.keys(actualZips) : []),
+                                  ]);
+
+                                  const zipRows = Array.from(allZips)
+                                    .map(z => ({
+                                      z,
+                                      cnt:   clientZipMap.get(z) ?? 0,
+                                      alloc: hasActual
+                                        ? (actualZips[z] ?? 0)
+                                        : (flyer.conversions > 0 ? spend * ((clientZipMap.get(z) ?? 0) / flyer.conversions) : 0),
+                                    }))
+                                    .sort((a, b) => b.alloc - a.alloc);
+
                                   return (
                                     <div style={{ padding: "14px 20px", background: "#f0f9ff", borderBottom: `1px solid #bae6fd` }}>
-                                      <p style={{ fontSize: 11, fontWeight: 700, color: "#0369a1", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
-                                        Zip Code Breakdown — Allocated Spend: ${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                      </p>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                                        <p style={{ fontSize: 11, fontWeight: 700, color: "#0369a1", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                                          Zip Code Breakdown
+                                        </p>
+                                        <span style={{
+                                          fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                                          background: hasActual ? "#dcfce7" : "#fef9c3",
+                                          color: hasActual ? "#166534" : "#854d0e",
+                                        }}>
+                                          {hasActual ? "✓ Actual spend from snapshot" : "~ Proportional estimate"}
+                                        </span>
+                                      </div>
                                       <div style={{ overflowX: "auto" }}>
                                         <table style={{ fontSize: 12, borderCollapse: "collapse", minWidth: 480 }}>
                                           <thead>
                                             <tr>
-                                              {["Zip Code", "Clients", "% of Flyer", "Allocated Spend", "CAC (this zip)"].map(h => (
+                                              {["Zip Code", "Clients", "% of Flyer", hasActual ? "Actual Spend" : "Est. Spend", "CAC (this zip)"].map(h => (
                                                 <th key={h} style={{ padding: "6px 14px", textAlign: h === "Zip Code" ? "left" : "center", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#0369a1", borderBottom: "1px solid #bae6fd", whiteSpace: "nowrap" }}>{h}</th>
                                               ))}
                                             </tr>
                                           </thead>
                                           <tbody>
-                                            {zipRows.map(([z, cnt]) => {
-                                              const pct     = ((cnt / flyer.conversions) * 100).toFixed(1);
-                                              const alloc   = spend * (cnt / flyer.conversions);
-                                              const zipCac  = alloc / cnt;
+                                            {zipRows.map(({ z, cnt, alloc }) => {
+                                              const pct    = flyer.conversions > 0 ? ((cnt / flyer.conversions) * 100).toFixed(1) : "—";
+                                              const zipCac = cnt > 0 ? alloc / cnt : null;
                                               return (
                                                 <tr key={z} style={{ borderBottom: "1px solid #e0f2fe" }}>
                                                   <td style={{ padding: "7px 14px", fontWeight: 700, color: "#0369a1", fontFamily: "monospace" }}>{z}</td>
-                                                  <td style={{ padding: "7px 14px", textAlign: "center", color: C.text, fontWeight: 600 }}>{cnt}</td>
-                                                  <td style={{ padding: "7px 14px", textAlign: "center", color: C.textSec }}>{pct}%</td>
+                                                  <td style={{ padding: "7px 14px", textAlign: "center", color: C.text, fontWeight: 600 }}>{cnt > 0 ? cnt : <span style={{ color: C.textMuted }}>—</span>}</td>
+                                                  <td style={{ padding: "7px 14px", textAlign: "center", color: C.textSec }}>{pct !== "—" ? `${pct}%` : "—"}</td>
                                                   <td style={{ padding: "7px 14px", textAlign: "center", color: C.purple, fontWeight: 600 }}>${alloc.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                                   <td style={{ padding: "7px 14px", textAlign: "center" }}>
-                                                    <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: zipCac < 100 ? C.greenSoft : zipCac < 300 ? C.amberSoft : C.redSoft, color: zipCac < 100 ? C.green : zipCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zipCac)}</span>
+                                                    {zipCac !== null
+                                                      ? <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: zipCac < 100 ? C.greenSoft : zipCac < 300 ? C.amberSoft : C.redSoft, color: zipCac < 100 ? C.green : zipCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zipCac)}</span>
+                                                      : <span style={{ color: C.textMuted }}>—</span>}
                                                   </td>
                                                 </tr>
                                               );
@@ -2230,7 +2262,8 @@ export default function Home() {
 
                   {/* ── Tab: Per Flyer × Zip ───────────────────────────────────────── */}
                   {eddmReportTab === "flyer-zip" && (() => {
-                    const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0 && f.conversions > 0);
+                    // Include all paid flyers (even 0 conversions) — zip spend may still be known from snapshot
+                    const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0);
                     if (paidFlyers.length === 0) {
                       return (
                         <div style={{ padding: "48px 32px", textAlign: "center", color: C.textMuted }}>
@@ -2242,50 +2275,80 @@ export default function Home() {
                     return (
                       <div>
                         {paidFlyers.map(flyer => {
-                          const key   = flyer.flyerName + "||" + flyer.trackingNumber;
-                          const spend = parseFloat(eddmSpends[key] ?? "") || 0;
-                          const zipMap = new Map<string, number>();
+                          const key        = flyer.flyerName + "||" + flyer.trackingNumber;
+                          const spend      = parseFloat(eddmSpends[key] ?? "") || 0;
+                          const actualZips = eddmZipSpends[key];
+                          const hasActual  = !!actualZips && Object.keys(actualZips).length > 0;
+
+                          // Build client zip map
+                          const clientZipMap = new Map<string, number>();
                           for (const c of flyer.matchedClients) {
                             const z = c.zip || "Unknown";
-                            zipMap.set(z, (zipMap.get(z) ?? 0) + 1);
+                            clientZipMap.set(z, (clientZipMap.get(z) ?? 0) + 1);
                           }
-                          const zipRows = Array.from(zipMap.entries()).sort((a, b) => b[1] - a[1]);
+
+                          // Union of zips from client data and actual spend data
+                          const allZipKeys = new Set<string>([
+                            ...Array.from(clientZipMap.keys()),
+                            ...(hasActual ? Object.keys(actualZips) : []),
+                          ]);
+
+                          const zipRows = Array.from(allZipKeys)
+                            .map(z => ({
+                              z,
+                              cnt:   clientZipMap.get(z) ?? 0,
+                              alloc: hasActual
+                                ? (actualZips[z] ?? 0)
+                                : (flyer.conversions > 0 ? spend * ((clientZipMap.get(z) ?? 0) / flyer.conversions) : 0),
+                            }))
+                            .sort((a, b) => b.alloc - a.alloc);
+
+                          if (zipRows.length === 0) return null;
+
                           return (
                             <div key={key} style={{ borderBottom: `1px solid ${C.border}` }}>
                               {/* Flyer sub-header */}
                               <div style={{ padding: "14px 24px", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                                <div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                                   <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{flyer.flyerName}</span>
-                                  <span style={{ fontSize: 11, fontFamily: "monospace", color: C.textMuted, marginLeft: 10 }}>{eddmFmtPhone(flyer.trackingNumber)}</span>
+                                  <span style={{ fontSize: 11, fontFamily: "monospace", color: C.textMuted }}>{eddmFmtPhone(flyer.trackingNumber)}</span>
+                                  <span style={{
+                                    fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                                    background: hasActual ? "#dcfce7" : "#fef9c3",
+                                    color: hasActual ? "#166534" : "#854d0e",
+                                  }}>
+                                    {hasActual ? "✓ Actual spend" : "~ Proportional estimate"}
+                                  </span>
                                 </div>
                                 <div style={{ display: "flex", gap: 16 }}>
                                   <span style={{ fontSize: 11, color: C.textSec }}><b style={{ color: C.blue }}>{flyer.conversions}</b> clients</span>
                                   <span style={{ fontSize: 11, color: C.textSec }}><b style={{ color: C.purple }}>${spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> spend</span>
-                                  <span style={{ fontSize: 11, color: C.textSec }}><b style={{ color: C.green }}>{eddmFmtMoney(spend / flyer.conversions)}</b> CAC</span>
+                                  {flyer.conversions > 0 && <span style={{ fontSize: 11, color: C.textSec }}><b style={{ color: C.green }}>{eddmFmtMoney(spend / flyer.conversions)}</b> CAC</span>}
                                 </div>
                               </div>
                               <div style={{ overflowX: "auto" }}>
                                 <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                                   <thead>
                                     <tr style={{ background: "#f0f9ff" }}>
-                                      {["Zip Code", "Clients", "% of Flyer", "Allocated Spend", "Zip CAC"].map((h, i) => (
+                                      {["Zip Code", "Clients", "% of Clients", hasActual ? "Actual Spend" : "Est. Spend", "Zip CAC"].map((h, i) => (
                                         <th key={h} style={{ padding: "9px 20px", textAlign: i === 0 ? "left" : "center", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#0369a1", borderBottom: "1px solid #bae6fd", whiteSpace: "nowrap" }}>{h}</th>
                                       ))}
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {zipRows.map(([z, cnt], idx) => {
-                                      const pct   = ((cnt / flyer.conversions) * 100).toFixed(1);
-                                      const alloc = spend * (cnt / flyer.conversions);
-                                      const zCac  = alloc / cnt;
+                                    {zipRows.map(({ z, cnt, alloc }, idx) => {
+                                      const pct  = flyer.conversions > 0 && cnt > 0 ? ((cnt / flyer.conversions) * 100).toFixed(1) : "—";
+                                      const zCac = cnt > 0 ? alloc / cnt : null;
                                       return (
                                         <tr key={z} style={{ borderBottom: "1px solid #e0f2fe", background: idx % 2 === 0 ? "#fff" : "#f0f9ff" }}>
                                           <td style={{ padding: "10px 20px", fontWeight: 700, color: "#0369a1", fontFamily: "monospace" }}>{z}</td>
-                                          <td style={{ padding: "10px 20px", textAlign: "center", fontWeight: 600, color: C.text }}>{cnt}</td>
-                                          <td style={{ padding: "10px 20px", textAlign: "center", color: C.textSec }}>{pct}%</td>
+                                          <td style={{ padding: "10px 20px", textAlign: "center", fontWeight: 600, color: C.text }}>{cnt > 0 ? cnt : <span style={{ color: C.textMuted }}>—</span>}</td>
+                                          <td style={{ padding: "10px 20px", textAlign: "center", color: C.textSec }}>{pct !== "—" ? `${pct}%` : "—"}</td>
                                           <td style={{ padding: "10px 20px", textAlign: "center", color: C.purple, fontWeight: 600 }}>${alloc.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                           <td style={{ padding: "10px 20px", textAlign: "center" }}>
-                                            <span style={{ display: "inline-block", padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 800, background: zCac < 100 ? C.greenSoft : zCac < 300 ? C.amberSoft : C.redSoft, color: zCac < 100 ? C.green : zCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zCac)}</span>
+                                            {zCac !== null
+                                              ? <span style={{ display: "inline-block", padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 800, background: zCac < 100 ? C.greenSoft : zCac < 300 ? C.amberSoft : C.redSoft, color: zCac < 100 ? C.green : zCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zCac)}</span>
+                                              : <span style={{ color: C.textMuted }}>—</span>}
                                           </td>
                                         </tr>
                                       );
@@ -2302,7 +2365,7 @@ export default function Home() {
 
                   {/* ── Tab: Overall Zip CAC ───────────────────────────────────────── */}
                   {eddmReportTab === "overall-zip" && (() => {
-                    const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0 && f.conversions > 0);
+                    const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0);
                     if (paidFlyers.length === 0) {
                       return (
                         <div style={{ padding: "48px 32px", textAlign: "center", color: C.textMuted }}>
@@ -2312,28 +2375,44 @@ export default function Home() {
                       );
                     }
 
-                    // Aggregate across all paid flyers
-                    // zipAllocated: total spend allocated to this zip across all paid flyers
-                    // zipClientEvents: total paid-flyer client conversions from this zip (across all paid flyers)
-                    // flyersServed: set of flyer names that had clients from this zip
+                    // Aggregate across all paid flyers.
+                    // For each flyer: use actual zip spends from snapshots when available,
+                    // otherwise fall back to proportional allocation.
+                    const anyActual       = paidFlyers.some(f => !!eddmZipSpends[f.flyerName + "||" + f.trackingNumber]);
                     const zipAllocated    = new Map<string, number>();
                     const zipClientEvents = new Map<string, number>();
                     const zipFlyers       = new Map<string, Set<string>>();
 
                     for (const flyer of paidFlyers) {
-                      const key   = flyer.flyerName + "||" + flyer.trackingNumber;
-                      const spend = parseFloat(eddmSpends[key] ?? "") || 0;
-                      const zipMap = new Map<string, number>();
+                      const key        = flyer.flyerName + "||" + flyer.trackingNumber;
+                      const spend      = parseFloat(eddmSpends[key] ?? "") || 0;
+                      const actualZips = eddmZipSpends[key];
+                      const hasActual  = !!actualZips && Object.keys(actualZips).length > 0;
+
+                      // Build client zip map
+                      const clientZipMap = new Map<string, number>();
                       for (const c of flyer.matchedClients) {
                         const z = c.zip || "Unknown";
-                        zipMap.set(z, (zipMap.get(z) ?? 0) + 1);
+                        clientZipMap.set(z, (clientZipMap.get(z) ?? 0) + 1);
                       }
-                      for (const [z, cnt] of zipMap.entries()) {
-                        const alloc = spend * (cnt / flyer.conversions);
-                        zipAllocated.set(z,    (zipAllocated.get(z)    ?? 0) + alloc);
-                        zipClientEvents.set(z, (zipClientEvents.get(z) ?? 0) + cnt);
-                        if (!zipFlyers.has(z)) zipFlyers.set(z, new Set());
-                        zipFlyers.get(z)!.add(flyer.flyerName || "Unknown");
+
+                      // Union of zip keys
+                      const allZipKeys = new Set<string>([
+                        ...Array.from(clientZipMap.keys()),
+                        ...(hasActual ? Object.keys(actualZips) : []),
+                      ]);
+
+                      for (const z of allZipKeys) {
+                        const cnt   = clientZipMap.get(z) ?? 0;
+                        const alloc = hasActual
+                          ? (actualZips[z] ?? 0)
+                          : (flyer.conversions > 0 ? spend * (cnt / flyer.conversions) : 0);
+                        if (alloc > 0 || cnt > 0) {
+                          zipAllocated.set(z,    (zipAllocated.get(z)    ?? 0) + alloc);
+                          zipClientEvents.set(z, (zipClientEvents.get(z) ?? 0) + cnt);
+                          if (!zipFlyers.has(z)) zipFlyers.set(z, new Set());
+                          zipFlyers.get(z)!.add(flyer.flyerName || "Unknown");
+                        }
                       }
                     }
 
@@ -2357,7 +2436,7 @@ export default function Home() {
                           {[
                             { label: "Zip Codes", value: overallRows.length.toString(), color: C.blue },
                             { label: "Total Paid Client Events", value: grandTotalClients.toString(), color: C.green },
-                            { label: "Overall Avg Zip CAC", value: grandTotalClients > 0 ? eddmFmtMoney(grandTotalAlloc / grandTotalClients) : "—", color: C.amber },
+                            { label: anyActual ? "Zip CAC (Actual)" : "Zip CAC (Estimated)", value: grandTotalClients > 0 ? eddmFmtMoney(grandTotalAlloc / grandTotalClients) : "—", color: C.amber },
                           ].map((s, i) => (
                             <div key={s.label} style={{ padding: "16px 24px", borderRight: i < 2 ? `1px solid ${C.border}` : "none" }}>
                               <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 4 }}>{s.label}</p>
@@ -2505,9 +2584,14 @@ export default function Home() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ messages: history, flyers: eddmResponse!.results }),
             });
-            const data = await res.json() as { reply: string; spendUpdates: Record<string, number> };
+            const data = await res.json() as {
+              reply: string;
+              spendUpdates: Record<string, number>;
+              zipSpendUpdates: Record<string, Record<string, number>>;
+            };
 
-            // Apply spend updates — match by tracking number digits
+            // Apply total spend updates — match by tracking number digits
+            // Works for ALL flyers regardless of conversion count.
             if (data.spendUpdates && Object.keys(data.spendUpdates).length > 0) {
               setEddmSpends(prev => {
                 const next = { ...prev };
@@ -2517,6 +2601,43 @@ export default function Home() {
                   if (flyer) {
                     const key = flyer.flyerName + "||" + flyer.trackingNumber;
                     next[key] = amount > 0 ? String(amount) : "";
+                  }
+                }
+                return next;
+              });
+            }
+
+            // Apply zip-level spend updates from snapshot parsing.
+            // Also auto-update the total spend for that flyer by summing its zip spends.
+            if (data.zipSpendUpdates && Object.keys(data.zipSpendUpdates).length > 0) {
+              setEddmZipSpends(prev => {
+                const next = { ...prev };
+                for (const [rawNum, zipData] of Object.entries(data.zipSpendUpdates)) {
+                  const digits = rawNum.replace(/\D/g, "");
+                  const flyer = eddmResponse!.results.find(f => f.trackingNumber.replace(/\D/g, "") === digits);
+                  if (flyer) {
+                    const key = flyer.flyerName + "||" + flyer.trackingNumber;
+                    // Normalize zip keys to 5-digit strings
+                    const normalized: Record<string, number> = {};
+                    for (const [z, amt] of Object.entries(zipData)) {
+                      const zd = String(z).replace(/\D/g, "").slice(0, 5).padStart(5, "0");
+                      if (zd.length >= 3) normalized[zd] = (normalized[zd] ?? 0) + amt;
+                    }
+                    next[key] = { ...(prev[key] ?? {}), ...normalized };
+                  }
+                }
+                return next;
+              });
+              // Auto-compute total spend per flyer from its zip spends
+              setEddmSpends(prev => {
+                const next = { ...prev };
+                for (const [rawNum, zipData] of Object.entries(data.zipSpendUpdates)) {
+                  const digits = rawNum.replace(/\D/g, "");
+                  const flyer = eddmResponse!.results.find(f => f.trackingNumber.replace(/\D/g, "") === digits);
+                  if (flyer) {
+                    const key = flyer.flyerName + "||" + flyer.trackingNumber;
+                    const total = Object.values(zipData).reduce((s, v) => s + v, 0);
+                    if (total > 0) next[key] = String(total);
                   }
                 }
                 return next;
