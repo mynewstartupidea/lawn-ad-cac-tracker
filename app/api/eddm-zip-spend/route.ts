@@ -18,6 +18,10 @@ function parseCurrency(raw: string): number {
   return parseFloat(String(raw).replace(/[^0-9.]/g, "")) || 0;
 }
 
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 /** Extracts drop key from strings like "Drop 1", "Drop 2.5", "Drop 2.5 - zipcodes" */
 function normalizeDrop(raw: string): string {
   const match = String(raw).match(/drop\s*(\d+(?:\.\d+)?)/i);
@@ -176,7 +180,7 @@ export async function POST(req: Request) {
         trackingMap.set(tracking, { totalSpend: 0, drops: new Map() });
       }
       const entry = trackingMap.get(tracking)!;
-      entry.totalSpend += amt;
+      entry.totalSpend = round2(entry.totalSpend + amt);
       // Count rows per (tracking, drop) → rep count
       entry.drops.set(dropKey, (entry.drops.get(dropKey) ?? 0) + 1);
     }
@@ -258,7 +262,7 @@ export async function POST(req: Request) {
       const label = flyer?.flyerName || tracking;
 
       // Total spend = sum of all Amount Spent rows for this tracking (File 1, authoritative)
-      spendUpdates[tracking] = totalSpend;
+      spendUpdates[tracking] = round2(totalSpend);
       if (flyer) flyersUpdated++;
 
       // Zip breakdown:
@@ -270,7 +274,7 @@ export async function POST(req: Request) {
         const zipCosts = dropZipCostMap.get(dropKey);
         if (!zipCosts) { missingDrops.push(dropKey); continue; }
         for (const [zip, costPerMailing] of zipCosts.entries()) {
-          zipSpend[zip] = (zipSpend[zip] ?? 0) + costPerMailing * repCount;
+          zipSpend[zip] = round2((zipSpend[zip] ?? 0) + costPerMailing * repCount);
         }
       }
 

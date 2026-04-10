@@ -18,6 +18,10 @@ interface Flyer {
 
 // ── Same math logic as eddm-zip-spend route ───────────────────────────────────
 
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 function normalizeDrop(raw: string): string {
   const match = String(raw).match(/drop\s*(\d+(?:\.\d+)?)/i);
   return match ? `drop${match[1]}` : "";
@@ -70,14 +74,14 @@ function computeFromRawData(
   const lines: string[] = [];
 
   for (const [tracking, { totalSpend, drops }] of trackingMap.entries()) {
-    spendUpdates[tracking] = totalSpend;
+    spendUpdates[tracking] = round2(totalSpend);
 
     const zipSpend: Record<string, number> = {};
     for (const [dropKey, repCount] of drops.entries()) {
       const zipCosts = dropZipCost.get(dropKey);
       if (!zipCosts) continue;
       for (const [zip, costPerMailing] of zipCosts.entries()) {
-        zipSpend[zip] = (zipSpend[zip] ?? 0) + costPerMailing * repCount;
+        zipSpend[zip] = round2((zipSpend[zip] ?? 0) + costPerMailing * repCount);
       }
     }
     if (Object.keys(zipSpend).length > 0) zipSpendUpdates[tracking] = zipSpend;
@@ -226,7 +230,7 @@ export async function POST(req: Request) {
     for (const r of spendRows) {
       const t = normalizeTracking(r.tracking);
       if (!t) continue;
-      trackingTotals.set(t, (trackingTotals.get(t) ?? 0) + r.amount);
+      trackingTotals.set(t, round2((trackingTotals.get(t) ?? 0) + r.amount));
     }
     for (const [t, total] of trackingTotals.entries()) {
       spendUpdates[t] = total;
