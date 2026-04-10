@@ -214,14 +214,26 @@ export async function POST(req: Request) {
     const computed = computeFromRawData(spendRows, zipRows);
     spendUpdates    = { ...spendUpdates, ...computed.spendUpdates };
     zipSpendUpdates = { ...zipSpendUpdates, ...computed.zipSpendUpdates };
-    reply = parsed.reply ?? `Computed from ${spendRows.length} spend rows and ${zipRows.length} zip rows. ${computed.summary}`;
+
+    // Show exactly what was extracted so user can verify GPT read correctly
+    const spendRowsSummary = spendRows.map(r => `  ${r.tracking} | ${r.drop} | $${r.amount}`).join("\n");
+    const spendTotals = Object.entries(computed.spendUpdates).map(([t, v]) => `  ${t} → $${v.toLocaleString("en-US", { minimumFractionDigits: 2 })}`).join("\n");
+    reply = `Extracted ${spendRows.length} spend rows and ${zipRows.length} zip rows.\n\nSpend rows I read:\n${spendRowsSummary}\n\nCalculated totals:\n${spendTotals}\n\nIf any row looks wrong, let me know — the numbers above are exactly what I read from your screenshot.`;
+
   } else if (spendRows.length > 0) {
     // File 1 only — sum spend per tracking, no zip breakdown yet
+    const trackingTotals = new Map<string, number>();
     for (const r of spendRows) {
       const t = normalizeTracking(r.tracking);
       if (!t) continue;
-      spendUpdates[t] = (spendUpdates[t] ?? 0) + r.amount;
+      trackingTotals.set(t, (trackingTotals.get(t) ?? 0) + r.amount);
     }
+    for (const [t, total] of trackingTotals.entries()) {
+      spendUpdates[t] = total;
+    }
+    const spendRowsSummary = spendRows.map(r => `  ${r.tracking} | ${r.drop} | $${r.amount}`).join("\n");
+    const totalsSummary = Array.from(trackingTotals.entries()).map(([t, v]) => `  ${t} → $${v.toLocaleString("en-US", { minimumFractionDigits: 2 })}`).join("\n");
+    reply = (parsed.reply ?? "") + `\n\nSpend rows I read:\n${spendRowsSummary}\n\nTotals:\n${totalsSummary}\n\nNow share the zip cost file (sectioned by Drop) to get zip-level breakdown.`;
   }
 
   return NextResponse.json({ reply, spendUpdates, zipSpendUpdates });
