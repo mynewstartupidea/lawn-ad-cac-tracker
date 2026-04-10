@@ -98,6 +98,17 @@ export async function POST(req: Request) {
       );
     }
 
+    // Reject image files with a clear message
+    const imageTypes = ["image/", "video/"];
+    for (const [label, file] of [["File 1", fileA], ["File 2", fileB]] as [string, File][]) {
+      if (imageTypes.some(t => file.type.startsWith(t)) || /\.(png|jpg|jpeg|gif|webp|bmp|svg|heic)$/i.test(file.name)) {
+        return NextResponse.json(
+          { error: `${label} is an image (${file.name}). Upload the actual CSV or Excel file here. To extract data from screenshots, use the Chat instead.` },
+          { status: 400 }
+        );
+      }
+    }
+
     const flyers: Array<{ flyerName: string; trackingNumber: string }> =
       flyersJson ? JSON.parse(flyersJson) : [];
 
