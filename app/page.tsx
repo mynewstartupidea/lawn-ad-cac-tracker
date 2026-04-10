@@ -332,11 +332,11 @@ const EDDM_ACCEPT = ".csv,.xls,.xlsx,application/vnd.ms-excel,application/vnd.op
 // ─── EDDM Upload Card ─────────────────────────────────────────────────────────
 
 function EddmUploadCard({
-  label, sublabel, hint, icon, file, onFile, onClear, disabled, accent, accentSoft, required,
+  label, sublabel, hint, icon, file, onFile, onClear, disabled, accent, accentSoft, required, acceptImages,
 }: {
   label: string; sublabel: string; hint?: string; icon: string;
   file: File | null; onFile: (f: File) => void; onClear: () => void;
-  disabled?: boolean; accent: string; accentSoft: string; required?: boolean;
+  disabled?: boolean; accent: string; accentSoft: string; required?: boolean; acceptImages?: boolean;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const warn = file ? eddmFileSizeWarning(file) : { level: null as null, msg: "" };
@@ -422,7 +422,9 @@ function EddmUploadCard({
         )}
 
         <input
-          ref={ref} type="file" accept={EDDM_ACCEPT} style={{ display: "none" }}
+          ref={ref} type="file"
+          accept={acceptImages ? `${EDDM_ACCEPT},image/*` : EDDM_ACCEPT}
+          style={{ display: "none" }}
           onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }}
         />
       </div>
@@ -539,11 +541,11 @@ export default function Home() {
   // When present, used instead of proportional estimates in zip reports.
   const [eddmZipSpends,      setEddmZipSpends]      = useState<Record<string, Record<string, number>>>({});
   // Zip spend calculator files (optional 4th section)
-  const [eddmZipCostFile,    setEddmZipCostFile]    = useState<File | null>(null);
-  const [eddmDropRepsFile,   setEddmDropRepsFile]   = useState<File | null>(null);
+  const [eddmZipCostFile,    setEddmZipCostFile]    = useState<File | null>(null); // File 2: sectioned zip cost (Drop headers + Zip|Amount)
+  const [eddmDropRepsFile,   setEddmDropRepsFile]   = useState<File | null>(null); // File 1: flat spend table (Amount Spent | Tracking | Drop)
   const [eddmZipCalcLoading, setEddmZipCalcLoading] = useState(false);
   const [eddmZipCalcResult,  setEddmZipCalcResult]  = useState<{
-    summaryLines: string[]; zipCostCount: number; matchedFlyers: number; totalMissingZips: number; error?: string;
+    summaryLines: string[]; trackingCount: number; dropSections: number; flyersUpdated: number; error?: string;
   } | null>(null);
   const eddmChatEndRef = useRef<HTMLDivElement>(null);
   const eddmImgInputRef = useRef<HTMLInputElement>(null);
@@ -1720,24 +1722,24 @@ export default function Home() {
                 setEddmZipCalcLoading(true);
                 try {
                   const zfd = new FormData();
-                  zfd.append("zipCost",  eddmZipCostFile);
-                  zfd.append("dropReps", eddmDropRepsFile);
-                  zfd.append("flyers",   JSON.stringify(data.results.map(r => ({ flyerName: r.flyerName, trackingNumber: r.trackingNumber }))));
+                  zfd.append("spendFile", eddmDropRepsFile); // File 1: flat spend table
+                  zfd.append("zipFile",   eddmZipCostFile);  // File 2: sectioned zip costs
+                  zfd.append("flyers",    JSON.stringify(data.results.map(r => ({ flyerName: r.flyerName, trackingNumber: r.trackingNumber }))));
                   const zres  = await fetch("/api/eddm-zip-spend", { method: "POST", body: zfd });
                   const zdata = await zres.json() as {
                     spendUpdates: Record<string, number>;
                     zipSpendUpdates: Record<string, Record<string, number>>;
                     summaryLines: string[];
-                    zipCostCount: number;
-                    matchedFlyers: number;
-                    totalMissingZips: number;
+                    trackingCount: number;
+                    dropSections: number;
+                    flyersUpdated: number;
                     error?: string;
                   };
                   if (zres.ok && !zdata.error) {
                     applyZipSpendData(zdata, data.results);
                     setEddmZipCalcResult(zdata);
                   } else {
-                    setEddmZipCalcResult({ summaryLines: [], zipCostCount: 0, matchedFlyers: 0, totalMissingZips: 0, error: zdata.error });
+                    setEddmZipCalcResult({ summaryLines: [], trackingCount: 0, dropSections: 0, flyersUpdated: 0, error: zdata.error });
                   }
                 } catch { /* silent — zip calc is optional */ }
                 finally { setEddmZipCalcLoading(false); }
@@ -1848,14 +1850,14 @@ export default function Home() {
                     </div>
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                       <EddmUploadCard
-                        label="Zip Cost File" sublabel="Zip codes + cost per mailing" hint="Columns: Zip Code, Cost Per Mailing" icon="📍"
-                        file={eddmZipCostFile} onFile={setEddmZipCostFile} onClear={() => setEddmZipCostFile(null)}
-                        accent="#0369a1" accentSoft="#f0f9ff"
+                        label="Spend / Drop File" sublabel="Amount Spent per tracking + drop" hint="Columns: Amount Spent, Tracking Number, Drop" icon="💰"
+                        file={eddmDropRepsFile} onFile={setEddmDropRepsFile} onClear={() => setEddmDropRepsFile(null)}
+                        accent="#0369a1" accentSoft="#f0f9ff" acceptImages
                       />
                       <EddmUploadCard
-                        label="Drop / Reps File" sublabel="Tracking #, drops, repetitions" hint="Columns: Tracking Number, Zip Code, Times Mailed" icon="🔄"
-                        file={eddmDropRepsFile} onFile={setEddmDropRepsFile} onClear={() => setEddmDropRepsFile(null)}
-                        accent="#0369a1" accentSoft="#f0f9ff"
+                        label="Zip Cost File" sublabel="Per-drop zip costs (sectioned)" hint="Sections: 'Drop 1 Zipcode' → Zip | Pieces | Amount" icon="📍"
+                        file={eddmZipCostFile} onFile={setEddmZipCostFile} onClear={() => setEddmZipCostFile(null)}
+                        accent="#0369a1" accentSoft="#f0f9ff" acceptImages
                       />
                     </div>
                     {eddmZipCostFile && eddmDropRepsFile && (
@@ -1865,7 +1867,7 @@ export default function Home() {
                     )}
                     {(eddmZipCostFile || eddmDropRepsFile) && !(eddmZipCostFile && eddmDropRepsFile) && (
                       <p style={{ fontSize: 11, color: C.amber, fontWeight: 600, marginTop: 8 }}>
-                        Upload both files to enable auto-fill. Missing: {!eddmZipCostFile ? "Zip Cost File" : "Drop/Reps File"}
+                        Upload both files to enable auto-fill. Missing: {!eddmDropRepsFile ? "Spend/Drop File" : "Zip Cost File"}
                       </p>
                     )}
                   </div>
@@ -1946,26 +1948,26 @@ export default function Home() {
                             setEddmZipCalcResult(null);
                             try {
                               const zfd = new FormData();
-                              zfd.append("zipCost",  eddmZipCostFile!);
-                              zfd.append("dropReps", eddmDropRepsFile!);
-                              zfd.append("flyers",   JSON.stringify(eddmResponse!.results.map(r => ({ flyerName: r.flyerName, trackingNumber: r.trackingNumber }))));
+                              zfd.append("spendFile", eddmDropRepsFile!); // File 1: flat spend table
+                              zfd.append("zipFile",   eddmZipCostFile!);  // File 2: sectioned zip costs
+                              zfd.append("flyers",    JSON.stringify(eddmResponse!.results.map(r => ({ flyerName: r.flyerName, trackingNumber: r.trackingNumber }))));
                               const zres  = await fetch("/api/eddm-zip-spend", { method: "POST", body: zfd });
                               const zdata = await zres.json() as {
                                 spendUpdates: Record<string, number>;
                                 zipSpendUpdates: Record<string, Record<string, number>>;
                                 summaryLines: string[];
-                                zipCostCount: number;
-                                matchedFlyers: number;
-                                totalMissingZips: number;
+                                trackingCount: number;
+                                dropSections: number;
+                                flyersUpdated: number;
                                 error?: string;
                               };
                               if (zres.ok && !zdata.error) {
                                 applyZipSpendData(zdata, eddmResponse!.results);
                                 setEddmZipCalcResult(zdata);
                               } else {
-                                setEddmZipCalcResult({ summaryLines: [], zipCostCount: 0, matchedFlyers: 0, totalMissingZips: 0, error: zdata.error });
+                                setEddmZipCalcResult({ summaryLines: [], trackingCount: 0, dropSections: 0, flyersUpdated: 0, error: zdata.error });
                               }
-                            } catch { setEddmZipCalcResult({ summaryLines: [], zipCostCount: 0, matchedFlyers: 0, totalMissingZips: 0, error: "Network error." }); }
+                            } catch { setEddmZipCalcResult({ summaryLines: [], trackingCount: 0, dropSections: 0, flyersUpdated: 0, error: "Network error." }); }
                             finally { setEddmZipCalcLoading(false); }
                           }}
                           style={{ fontSize: 12, fontWeight: 700, color: "#fff", background: eddmZipCalcLoading ? "#94a3b8" : "linear-gradient(135deg, #0369a1, #0891b2)", border: "none", borderRadius: 8, padding: "7px 16px", cursor: eddmZipCalcLoading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}
@@ -1985,11 +1987,9 @@ export default function Home() {
                       : (
                         <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, padding: "12px 16px" }}>
                           <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: eddmZipCalcResult.summaryLines.length > 0 ? 10 : 0 }}>
-                            <span style={{ fontSize: 12, color: "#0369a1" }}><b>{eddmZipCalcResult.zipCostCount}</b> zip costs loaded</span>
-                            <span style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>✓ {eddmZipCalcResult.matchedFlyers} flyer{eddmZipCalcResult.matchedFlyers !== 1 ? "s" : ""} updated</span>
-                            {eddmZipCalcResult.totalMissingZips > 0 && (
-                              <span style={{ fontSize: 12, color: C.amber, fontWeight: 600 }}>⚠ {eddmZipCalcResult.totalMissingZips} zip{eddmZipCalcResult.totalMissingZips !== 1 ? "s" : ""} had no cost data</span>
-                            )}
+                            <span style={{ fontSize: 12, color: "#0369a1" }}><b>{eddmZipCalcResult.trackingCount}</b> tracking numbers</span>
+                            <span style={{ fontSize: 12, color: "#0369a1" }}><b>{eddmZipCalcResult.dropSections}</b> drop sections</span>
+                            <span style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>✓ {eddmZipCalcResult.flyersUpdated} flyer{eddmZipCalcResult.flyersUpdated !== 1 ? "s" : ""} updated</span>
                           </div>
                           {eddmZipCalcResult.summaryLines.length > 0 && (
                             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
