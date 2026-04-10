@@ -2797,8 +2797,8 @@ export default function Home() {
               });
             }
 
-            // Apply zip-level spend updates from snapshot parsing.
-            // Also auto-update the total spend for that flyer by summing its zip spends.
+            // Apply zip-level spend updates — only updates the zip breakdown, never overwrites total spend.
+            // Total spend is authoritative from spendUpdates above (sourced from File 1 row sums).
             if (data.zipSpendUpdates && Object.keys(data.zipSpendUpdates).length > 0) {
               setEddmZipSpends(prev => {
                 const next = { ...prev };
@@ -2807,31 +2807,18 @@ export default function Home() {
                   const flyer = eddmResponse!.results.find(f => f.trackingNumber.replace(/\D/g, "") === digits);
                   if (flyer) {
                     const key = flyer.flyerName + "||" + flyer.trackingNumber;
-                    // Normalize zip keys to 5-digit strings
                     const normalized: Record<string, number> = {};
                     for (const [z, amt] of Object.entries(zipData)) {
                       const zd = String(z).replace(/\D/g, "").slice(0, 5).padStart(5, "0");
-                      if (zd.length >= 3) normalized[zd] = (normalized[zd] ?? 0) + amt;
+                      if (zd.length >= 3) normalized[zd] = Math.round(((normalized[zd] ?? 0) + amt) * 100) / 100;
                     }
                     next[key] = { ...(prev[key] ?? {}), ...normalized };
                   }
                 }
                 return next;
               });
-              // Auto-compute total spend per flyer from its zip spends
-              setEddmSpends(prev => {
-                const next = { ...prev };
-                for (const [rawNum, zipData] of Object.entries(data.zipSpendUpdates)) {
-                  const digits = rawNum.replace(/\D/g, "");
-                  const flyer = eddmResponse!.results.find(f => f.trackingNumber.replace(/\D/g, "") === digits);
-                  if (flyer) {
-                    const key = flyer.flyerName + "||" + flyer.trackingNumber;
-                    const total = Object.values(zipData).reduce((s, v) => s + v, 0);
-                    if (total > 0) next[key] = String(total);
-                  }
-                }
-                return next;
-              });
+              // DO NOT re-derive total spend from zip sums — zip data may be incomplete.
+              // spendUpdates (from File 1 row sums) is the authoritative total.
             }
 
             setEddmChatMessages(p => [...p, { id: Date.now().toString() + "r", role: "assistant", content: data.reply, ts: new Date() }]);
