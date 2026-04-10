@@ -6,7 +6,7 @@ export const maxDuration = 60;
 interface IncomingMessage {
   role: "user" | "assistant";
   content: string;
-  image?: string; // base64 data URL, e.g. "data:image/png;base64,..."
+  images?: string[]; // base64 data URLs — supports multiple screenshots per message
 }
 
 interface Flyer {
@@ -105,12 +105,13 @@ export async function POST(req: Request) {
       if (m.role === "assistant") {
         return { role: "assistant" as const, content: m.content };
       }
-      if (m.image) {
+      // User message — may include one or more screenshots
+      if (m.images && m.images.length > 0) {
         return {
           role: "user" as const,
           content: [
-            { type: "text" as const,      text: m.content || "Here is the snapshot, please extract the data." },
-            { type: "image_url" as const, image_url: { url: m.image, detail: "high" as const } },
+            { type: "text" as const, text: m.content || `Here are ${m.images.length} screenshot${m.images.length > 1 ? "s" : ""}, please extract the data.` },
+            ...m.images.map(img => ({ type: "image_url" as const, image_url: { url: img, detail: "high" as const } })),
           ],
         };
       }

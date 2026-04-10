@@ -529,15 +529,22 @@ export default function Home() {
   const [eddmShowZip,      setEddmShowZip]      = useState(false);
   const [eddmReportTab,    setEddmReportTab]    = useState<"flyer" | "flyer-zip" | "overall-zip">("flyer");
   const [eddmChatOpen,     setEddmChatOpen]     = useState(false);
-  const [eddmChatMessages, setEddmChatMessages] = useState<{ id: string; role: "user" | "assistant"; content: string; image?: string; ts: Date }[]>([
+  const [eddmChatMessages, setEddmChatMessages] = useState<{ id: string; role: "user" | "assistant"; content: string; images?: string[]; ts: Date }[]>([
     { id: "eddm-welcome", role: "assistant", content: "Hi! I handle three types of input:\n\n1️⃣ **Total spend** — paste or screenshot a billing summary with tracking numbers + amounts.\n\n2️⃣ **Zip cost snapshot** — share a table of zip codes and their cost per mailing.\n\n3️⃣ **Drop/reps snapshot** — share tracking numbers, their drops, which zips each drop covers, and how many times each drop was mailed. I'll combine this with the zip costs to calculate exact per-zip spend.\n\nShare either snapshot and I'll figure out the rest!", ts: new Date() },
   ]);
   const [eddmChatInput,   setEddmChatInput]   = useState("");
-  const [eddmChatImg,     setEddmChatImg]     = useState<string | null>(null);
+  const [eddmChatImgs,    setEddmChatImgs]    = useState<string[]>([]);   // supports multiple screenshots
   const [eddmChatBusy,    setEddmChatBusy]    = useState(false);
   // Actual zip-level spends from snapshot parsing: flyerKey → { "32601": 1350, ... }
   // When present, used instead of proportional estimates in zip reports.
-  const [eddmZipSpends,   setEddmZipSpends]   = useState<Record<string, Record<string, number>>>({});
+  const [eddmZipSpends,      setEddmZipSpends]      = useState<Record<string, Record<string, number>>>({});
+  // Zip spend calculator files (optional 4th section)
+  const [eddmZipCostFile,    setEddmZipCostFile]    = useState<File | null>(null);
+  const [eddmDropRepsFile,   setEddmDropRepsFile]   = useState<File | null>(null);
+  const [eddmZipCalcLoading, setEddmZipCalcLoading] = useState(false);
+  const [eddmZipCalcResult,  setEddmZipCalcResult]  = useState<{
+    summaryLines: string[]; zipCostCount: number; matchedFlyers: number; totalMissingZips: number; error?: string;
+  } | null>(null);
   const eddmChatEndRef = useRef<HTMLDivElement>(null);
   const eddmImgInputRef = useRef<HTMLInputElement>(null);
 
@@ -1693,6 +1700,8 @@ export default function Home() {
             setEddmResponse(null);
             setEddmExpanded(new Set());
             setEddmSpends({});
+            setEddmZipSpends({});
+            setEddmZipCalcResult(null);
             try {
               const fd = new FormData();
               fd.append("callrail", eddmCallrailFile!);
@@ -1700,10 +1709,75 @@ export default function Home() {
               fd.append("region",   clientRegion!);
               const res  = await fetch("/api/eddm-match", { method: "POST", body: fd });
               const data = await res.json() as EddmResponse;
-              if (!res.ok || data.error) setEddmError(data.error ?? "Something went wrong.");
-              else setEddmResponse(data);
+              if (!res.ok || data.error) {
+                setEddmError(data.error ?? "Something went wrong.");
+                return;
+              }
+              setEddmResponse(data);
+
+              // If zip spend files are already uploaded, auto-calculate immediately
+              if (eddmZipCostFile && eddmDropRepsFile && data.results.length > 0) {
+                setEddmZipCalcLoading(true);
+                try {
+                  const zfd = new FormData();
+                  zfd.append("zipCost",  eddmZipCostFile);
+                  zfd.append("dropReps", eddmDropRepsFile);
+                  zfd.append("flyers",   JSON.stringify(data.results.map(r => ({ flyerName: r.flyerName, trackingNumber: r.trackingNumber }))));
+                  const zres  = await fetch("/api/eddm-zip-spend", { method: "POST", body: zfd });
+                  const zdata = await zres.json() as {
+                    spendUpdates: Record<string, number>;
+                    zipSpendUpdates: Record<string, Record<string, number>>;
+                    summaryLines: string[];
+                    zipCostCount: number;
+                    matchedFlyers: number;
+                    totalMissingZips: number;
+                    error?: string;
+                  };
+                  if (zres.ok && !zdata.error) {
+                    applyZipSpendData(zdata, data.results);
+                    setEddmZipCalcResult(zdata);
+                  } else {
+                    setEddmZipCalcResult({ summaryLines: [], zipCostCount: 0, matchedFlyers: 0, totalMissingZips: 0, error: zdata.error });
+                  }
+                } catch { /* silent — zip calc is optional */ }
+                finally { setEddmZipCalcLoading(false); }
+              }
             } catch { setEddmError("Network error. Check your connection and try again."); }
             finally  { setEddmLoading(false); }
+          }
+
+          // Shared helper — apply zip spend API response to state
+          function applyZipSpendData(
+            zdata: { spendUpdates: Record<string, number>; zipSpendUpdates: Record<string, Record<string, number>> },
+            flyerList: Array<{ flyerName: string; trackingNumber: string }>,
+          ) {
+            // Apply total spend per flyer
+            if (Object.keys(zdata.spendUpdates).length > 0) {
+              setEddmSpends(prev => {
+                const next = { ...prev };
+                for (const [rawNum, total] of Object.entries(zdata.spendUpdates)) {
+                  const digits = rawNum.replace(/\D/g, "");
+                  const flyer  = flyerList.find(f => f.trackingNumber.replace(/\D/g, "") === digits);
+                  if (flyer && total > 0) next[flyer.flyerName + "||" + flyer.trackingNumber] = String(total);
+                }
+                return next;
+              });
+            }
+            // Apply per-zip spend
+            if (Object.keys(zdata.zipSpendUpdates).length > 0) {
+              setEddmZipSpends(prev => {
+                const next = { ...prev };
+                for (const [rawNum, zipData] of Object.entries(zdata.zipSpendUpdates)) {
+                  const digits = rawNum.replace(/\D/g, "");
+                  const flyer  = flyerList.find(f => f.trackingNumber.replace(/\D/g, "") === digits);
+                  if (flyer) {
+                    const key = flyer.flyerName + "||" + flyer.trackingNumber;
+                    next[key] = { ...(prev[key] ?? {}), ...zipData };
+                  }
+                }
+                return next;
+              });
+            }
           }
 
           function toggleEddm(key: string) {
@@ -1731,7 +1805,7 @@ export default function Home() {
                 </div>
                 {eddmResponse && (
                   <button
-                    onClick={() => { setEddmResponse(null); setEddmCallrailFile(null); setEddmFloridaFile(null); setEddmGeorgiaFile(null); }}
+                    onClick={() => { setEddmResponse(null); setEddmCallrailFile(null); setEddmFloridaFile(null); setEddmGeorgiaFile(null); setEddmZipCostFile(null); setEddmDropRepsFile(null); setEddmZipCalcResult(null); setEddmZipSpends({}); setEddmSpends({}); }}
                     style={{ fontSize: 12, fontWeight: 600, color: C.textSec, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}
                   >
                     ↩ New Analysis
@@ -1747,6 +1821,7 @@ export default function Home() {
                     Upload your CallRail export and either the Florida <em>or</em> Georgia client list from Service Autopilot. Both CSV and Excel are supported.
                   </p>
 
+                  {/* Required files */}
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     <EddmUploadCard
                       label="CallRail Data" sublabel="Export from CallRail dashboard" hint="CSV or Excel (.xlsx)" icon="📞"
@@ -1763,6 +1838,36 @@ export default function Home() {
                       file={eddmGeorgiaFile} onFile={setEddmGeorgiaFile} onClear={() => setEddmGeorgiaFile(null)}
                       disabled={!!eddmFloridaFile} accent={C.green} accentSoft={C.greenSoft}
                     />
+                  </div>
+
+                  {/* Optional: Zip Spend files */}
+                  <div style={{ marginTop: 20, paddingTop: 20, borderTop: `1px dashed ${C.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <p style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Zip Spend Data <span style={{ fontWeight: 400, color: C.textMuted }}>(optional — auto-fills spend + zip breakdown)</span></p>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#f0f9ff", color: "#0369a1" }}>OPTIONAL</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      <EddmUploadCard
+                        label="Zip Cost File" sublabel="Zip codes + cost per mailing" hint="Columns: Zip Code, Cost Per Mailing" icon="📍"
+                        file={eddmZipCostFile} onFile={setEddmZipCostFile} onClear={() => setEddmZipCostFile(null)}
+                        accent="#0369a1" accentSoft="#f0f9ff"
+                      />
+                      <EddmUploadCard
+                        label="Drop / Reps File" sublabel="Tracking #, drops, repetitions" hint="Columns: Tracking Number, Zip Code, Times Mailed" icon="🔄"
+                        file={eddmDropRepsFile} onFile={setEddmDropRepsFile} onClear={() => setEddmDropRepsFile(null)}
+                        accent="#0369a1" accentSoft="#f0f9ff"
+                      />
+                    </div>
+                    {eddmZipCostFile && eddmDropRepsFile && (
+                      <p style={{ fontSize: 11, color: "#0369a1", fontWeight: 600, marginTop: 8 }}>
+                        ✓ Both zip spend files uploaded — spend will auto-fill when you click Find CAC
+                      </p>
+                    )}
+                    {(eddmZipCostFile || eddmDropRepsFile) && !(eddmZipCostFile && eddmDropRepsFile) && (
+                      <p style={{ fontSize: 11, color: C.amber, fontWeight: 600, marginTop: 8 }}>
+                        Upload both files to enable auto-fill. Missing: {!eddmZipCostFile ? "Zip Cost File" : "Drop/Reps File"}
+                      </p>
+                    )}
                   </div>
 
                   {/* Region lock notice */}
@@ -1812,6 +1917,90 @@ export default function Home() {
               {eddmError && (
                 <div style={{ background: C.redSoft, border: `1px solid ${C.red}30`, borderRadius: 12, padding: "13px 16px", fontSize: 13, color: C.red, fontWeight: 500 }}>
                   {eddmError}
+                </div>
+              )}
+
+              {/* ── Zip Spend Calculator (post-match, when files present) ── */}
+              {eddmResponse && (eddmZipCostFile || eddmDropRepsFile || eddmZipCalcResult) && (
+                <div style={{ background: C.card, border: `1px solid #bae6fd`, borderRadius: 14, padding: "18px 20px", boxShadow: C.shadow }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: eddmZipCalcResult ? 12 : 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: "#f0f9ff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>📍</div>
+                      <div>
+                        <p style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Zip Spend Calculator</p>
+                        <p style={{ fontSize: 11, color: C.textMuted }}>
+                          {eddmZipCostFile && eddmDropRepsFile
+                            ? `${eddmZipCostFile.name} + ${eddmDropRepsFile.name}`
+                            : eddmZipCalcResult
+                            ? "Calculated from uploaded files"
+                            : "Upload both files to auto-calculate zip-level spend"}
+                        </p>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {eddmZipCostFile && eddmDropRepsFile && (
+                        <button
+                          disabled={eddmZipCalcLoading}
+                          onClick={async () => {
+                            setEddmZipCalcLoading(true);
+                            setEddmZipCalcResult(null);
+                            try {
+                              const zfd = new FormData();
+                              zfd.append("zipCost",  eddmZipCostFile!);
+                              zfd.append("dropReps", eddmDropRepsFile!);
+                              zfd.append("flyers",   JSON.stringify(eddmResponse!.results.map(r => ({ flyerName: r.flyerName, trackingNumber: r.trackingNumber }))));
+                              const zres  = await fetch("/api/eddm-zip-spend", { method: "POST", body: zfd });
+                              const zdata = await zres.json() as {
+                                spendUpdates: Record<string, number>;
+                                zipSpendUpdates: Record<string, Record<string, number>>;
+                                summaryLines: string[];
+                                zipCostCount: number;
+                                matchedFlyers: number;
+                                totalMissingZips: number;
+                                error?: string;
+                              };
+                              if (zres.ok && !zdata.error) {
+                                applyZipSpendData(zdata, eddmResponse!.results);
+                                setEddmZipCalcResult(zdata);
+                              } else {
+                                setEddmZipCalcResult({ summaryLines: [], zipCostCount: 0, matchedFlyers: 0, totalMissingZips: 0, error: zdata.error });
+                              }
+                            } catch { setEddmZipCalcResult({ summaryLines: [], zipCostCount: 0, matchedFlyers: 0, totalMissingZips: 0, error: "Network error." }); }
+                            finally { setEddmZipCalcLoading(false); }
+                          }}
+                          style={{ fontSize: 12, fontWeight: 700, color: "#fff", background: eddmZipCalcLoading ? "#94a3b8" : "linear-gradient(135deg, #0369a1, #0891b2)", border: "none", borderRadius: 8, padding: "7px 16px", cursor: eddmZipCalcLoading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                        >
+                          {eddmZipCalcLoading
+                            ? <><svg style={{ width: 12, height: 12 }} className="animate-spin" fill="none" viewBox="0 0 24 24"><circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="#fff" strokeWidth="4"/><path style={{ opacity: 0.75 }} fill="#fff" d="M4 12a8 8 0 018-8v8H4z"/></svg>Calculating…</>
+                            : eddmZipCalcResult ? "↺ Recalculate" : "Calculate Zip Spend"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Result summary */}
+                  {eddmZipCalcResult && (
+                    eddmZipCalcResult.error
+                      ? <div style={{ background: C.redSoft, border: `1px solid ${C.red}30`, borderRadius: 10, padding: "10px 14px", fontSize: 12, color: C.red, fontWeight: 500 }}>{eddmZipCalcResult.error}</div>
+                      : (
+                        <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, padding: "12px 16px" }}>
+                          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: eddmZipCalcResult.summaryLines.length > 0 ? 10 : 0 }}>
+                            <span style={{ fontSize: 12, color: "#0369a1" }}><b>{eddmZipCalcResult.zipCostCount}</b> zip costs loaded</span>
+                            <span style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>✓ {eddmZipCalcResult.matchedFlyers} flyer{eddmZipCalcResult.matchedFlyers !== 1 ? "s" : ""} updated</span>
+                            {eddmZipCalcResult.totalMissingZips > 0 && (
+                              <span style={{ fontSize: 12, color: C.amber, fontWeight: 600 }}>⚠ {eddmZipCalcResult.totalMissingZips} zip{eddmZipCalcResult.totalMissingZips !== 1 ? "s" : ""} had no cost data</span>
+                            )}
+                          </div>
+                          {eddmZipCalcResult.summaryLines.length > 0 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                              {eddmZipCalcResult.summaryLines.map((line, i) => (
+                                <p key={i} style={{ fontSize: 11, color: "#0369a1", fontFamily: "monospace" }}>• {line}</p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                  )}
                 </div>
               )}
 
@@ -2564,19 +2753,20 @@ export default function Home() {
 
       {/* ── EDDM Spend Assistant FAB + Panel ────────────────────────────── */}
       {tab === "eddm" && eddmResponse && (() => {
-        async function sendEddmChat(text: string, img?: string | null) {
+        async function sendEddmChat(text: string, imgs?: string[]) {
           const trimmed = text.trim();
-          if (!trimmed && !img) return;
+          const hasImgs = imgs && imgs.length > 0;
+          if (!trimmed && !hasImgs) return;
 
-          const userMsg = { id: Date.now().toString(), role: "user" as const, content: trimmed, image: img ?? undefined, ts: new Date() };
+          const userMsg = { id: Date.now().toString(), role: "user" as const, content: trimmed, images: hasImgs ? imgs : undefined, ts: new Date() };
           setEddmChatMessages(p => [...p, userMsg]);
           setEddmChatInput("");
-          setEddmChatImg(null);
+          setEddmChatImgs([]);
           setEddmChatBusy(true);
 
           try {
             const history = [...eddmChatMessages, userMsg].slice(-12).map(m => ({
-              role: m.role, content: m.content, image: m.image,
+              role: m.role, content: m.content, images: m.images,
             }));
 
             const res  = await fetch("/api/eddm-chat", {
@@ -2655,25 +2845,25 @@ export default function Home() {
 
         function handleEddmPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
           const items = e.clipboardData.items;
-          for (const item of Array.from(items)) {
-            if (item.type.startsWith("image/")) {
-              e.preventDefault();
-              const file = item.getAsFile();
-              if (!file) continue;
-              const reader = new FileReader();
-              reader.onload = ev => setEddmChatImg(ev.target?.result as string);
-              reader.readAsDataURL(file);
-              return;
-            }
+          const imageItems = Array.from(items).filter(it => it.type.startsWith("image/"));
+          if (imageItems.length === 0) return;
+          e.preventDefault();
+          for (const item of imageItems) {
+            const file = item.getAsFile();
+            if (!file) continue;
+            const reader = new FileReader();
+            reader.onload = ev => setEddmChatImgs(prev => [...prev, ev.target?.result as string]);
+            reader.readAsDataURL(file);
           }
         }
 
         function handleEddmImgFile(e: React.ChangeEvent<HTMLInputElement>) {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = ev => setEddmChatImg(ev.target?.result as string);
-          reader.readAsDataURL(file);
+          const files = Array.from(e.target.files ?? []);
+          for (const file of files) {
+            const reader = new FileReader();
+            reader.onload = ev => setEddmChatImgs(prev => [...prev, ev.target?.result as string]);
+            reader.readAsDataURL(file);
+          }
           e.target.value = "";
         }
 
@@ -2740,8 +2930,12 @@ export default function Home() {
               <div style={{ flex: 1, overflowY: "auto", padding: "14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
                 {eddmChatMessages.map(m => (
                   <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: m.role === "user" ? "flex-end" : "flex-start", gap: 4 }}>
-                    {m.image && (
-                      <img src={m.image} alt="attachment" style={{ maxWidth: 220, borderRadius: 10, border: `1px solid ${C.border}` }} />
+                    {m.images && m.images.length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                        {m.images.map((img, idx) => (
+                          <img key={idx} src={img} alt={`attachment ${idx + 1}`} style={{ maxWidth: 180, maxHeight: 120, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.border}` }} />
+                        ))}
+                      </div>
                     )}
                     <div style={{
                       maxWidth: "85%", padding: "9px 13px", borderRadius: m.role === "user" ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
@@ -2766,12 +2960,19 @@ export default function Home() {
                 <div ref={eddmChatEndRef} />
               </div>
 
-              {/* Image preview */}
-              {eddmChatImg && (
-                <div style={{ padding: "8px 12px 0", display: "flex", alignItems: "center", gap: 8 }}>
-                  <img src={eddmChatImg} alt="preview" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}` }} />
-                  <button onClick={() => setEddmChatImg(null)} style={{ fontSize: 11, color: C.red, background: C.redSoft, border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontWeight: 600 }}>Remove</button>
-                  <span style={{ fontSize: 11, color: C.textMuted }}>Image ready to send</span>
+              {/* Image previews — multiple supported */}
+              {eddmChatImgs.length > 0 && (
+                <div style={{ padding: "8px 12px 0", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                  {eddmChatImgs.map((img, idx) => (
+                    <div key={idx} style={{ position: "relative", display: "inline-flex" }}>
+                      <img src={img} alt={`screenshot ${idx + 1}`} style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}` }} />
+                      <button
+                        onClick={() => setEddmChatImgs(prev => prev.filter((_, i) => i !== idx))}
+                        style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", background: C.red, border: "2px solid #fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff", fontWeight: 700, lineHeight: 1 }}
+                      >×</button>
+                    </div>
+                  ))}
+                  <span style={{ fontSize: 11, color: C.textMuted }}>{eddmChatImgs.length} screenshot{eddmChatImgs.length > 1 ? "s" : ""} — click 📎 to add more</span>
                 </div>
               )}
 
@@ -2782,7 +2983,7 @@ export default function Home() {
                   value={eddmChatInput}
                   onChange={e => setEddmChatInput(e.target.value)}
                   onPaste={handleEddmPaste}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendEddmChat(eddmChatInput, eddmChatImg); } }}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendEddmChat(eddmChatInput, eddmChatImgs); } }}
                   placeholder="Paste spend data, describe amounts, or press Ctrl+V to paste a screenshot…"
                   disabled={eddmChatBusy}
                   style={{
@@ -2804,16 +3005,16 @@ export default function Home() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
                   </button>
-                  <input ref={eddmImgInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleEddmImgFile} />
+                  <input ref={eddmImgInputRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={handleEddmImgFile} />
 
-                  <p style={{ flex: 1, fontSize: 10, color: C.textMuted }}>Enter to send · Shift+Enter for newline · Ctrl+V to paste image</p>
+                  <p style={{ flex: 1, fontSize: 10, color: C.textMuted }}>Enter to send · Shift+Enter for newline · Ctrl+V or 📎 to add screenshots</p>
 
                   <button
-                    onClick={() => sendEddmChat(eddmChatInput, eddmChatImg)}
-                    disabled={eddmChatBusy || (!eddmChatInput.trim() && !eddmChatImg)}
+                    onClick={() => sendEddmChat(eddmChatInput, eddmChatImgs)}
+                    disabled={eddmChatBusy || (!eddmChatInput.trim() && eddmChatImgs.length === 0)}
                     style={{
-                      background: (eddmChatBusy || (!eddmChatInput.trim() && !eddmChatImg)) ? "#e2e8f0" : "linear-gradient(135deg, #0891b2, #0e7490)",
-                      color: (eddmChatBusy || (!eddmChatInput.trim() && !eddmChatImg)) ? C.textMuted : "#fff",
+                      background: (eddmChatBusy || (!eddmChatInput.trim() && eddmChatImgs.length === 0)) ? "#e2e8f0" : "linear-gradient(135deg, #0891b2, #0e7490)",
+                      color: (eddmChatBusy || (!eddmChatInput.trim() && eddmChatImgs.length === 0)) ? C.textMuted : "#fff",
                       border: "none", borderRadius: 8, padding: "6px 14px",
                       fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0,
                     }}
