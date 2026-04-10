@@ -6,7 +6,7 @@ export const maxDuration = 60;
 interface IncomingMessage {
   role: "user" | "assistant";
   content: string;
-  images?: string[]; // base64 data URLs — supports multiple screenshots per message
+  images?: string[];
 }
 
 interface Flyer {
@@ -14,6 +14,79 @@ interface Flyer {
   trackingNumber: string;
   totalCalls: number;
   conversions: number;
+}
+
+// ── Same math logic as eddm-zip-spend route ───────────────────────────────────
+
+function normalizeDrop(raw: string): string {
+  const match = String(raw).match(/drop\s*(\d+(?:\.\d+)?)/i);
+  return match ? `drop${match[1]}` : "";
+}
+
+function normalizeTracking(raw: string): string {
+  return String(raw).replace(/\D/g, "");
+}
+
+function normalizeZip(raw: string): string {
+  const digits = String(raw).replace(/\D/g, "").slice(0, 5);
+  return digits.length >= 3 ? digits.padStart(5, "0") : "";
+}
+
+interface RawSpendRow { tracking: string; drop: string; amount: number; }
+interface RawZipRow   { drop: string; zip: string; amountPerMailing: number; }
+
+function computeFromRawData(
+  spendRows: RawSpendRow[],
+  zipRows:   RawZipRow[],
+): {
+  spendUpdates:    Record<string, number>;
+  zipSpendUpdates: Record<string, Record<string, number>>;
+  summary: string;
+} {
+  // Build drop → zip → cost map
+  const dropZipCost = new Map<string, Map<string, number>>();
+  for (const r of zipRows) {
+    const dropKey = normalizeDrop(r.drop);
+    const zip     = normalizeZip(String(r.zip));
+    if (!dropKey || !zip || r.amountPerMailing <= 0) continue;
+    if (!dropZipCost.has(dropKey)) dropZipCost.set(dropKey, new Map());
+    dropZipCost.get(dropKey)!.set(zip, r.amountPerMailing);
+  }
+
+  // Build tracking → { totalSpend, drops: Map<dropKey, repCount> }
+  const trackingMap = new Map<string, { totalSpend: number; drops: Map<string, number> }>();
+  for (const r of spendRows) {
+    const tracking = normalizeTracking(r.tracking);
+    const dropKey  = normalizeDrop(r.drop);
+    if (!tracking || !dropKey) continue;
+    if (!trackingMap.has(tracking)) trackingMap.set(tracking, { totalSpend: 0, drops: new Map() });
+    const entry = trackingMap.get(tracking)!;
+    entry.totalSpend += r.amount;
+    entry.drops.set(dropKey, (entry.drops.get(dropKey) ?? 0) + 1);
+  }
+
+  const spendUpdates:    Record<string, number>                 = {};
+  const zipSpendUpdates: Record<string, Record<string, number>> = {};
+  const lines: string[] = [];
+
+  for (const [tracking, { totalSpend, drops }] of trackingMap.entries()) {
+    spendUpdates[tracking] = totalSpend;
+
+    const zipSpend: Record<string, number> = {};
+    for (const [dropKey, repCount] of drops.entries()) {
+      const zipCosts = dropZipCost.get(dropKey);
+      if (!zipCosts) continue;
+      for (const [zip, costPerMailing] of zipCosts.entries()) {
+        zipSpend[zip] = (zipSpend[zip] ?? 0) + costPerMailing * repCount;
+      }
+    }
+    if (Object.keys(zipSpend).length > 0) zipSpendUpdates[tracking] = zipSpend;
+
+    const fmt = (n: number) => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    lines.push(`${tracking}: total ${fmt(totalSpend)}, ${Object.keys(zipSpend).length} zips`);
+  }
+
+  return { spendUpdates, zipSpendUpdates, summary: lines.join(" | ") };
 }
 
 export async function POST(req: Request) {
@@ -27,108 +100,72 @@ export async function POST(req: Request) {
 
   const openai = new OpenAI({ apiKey: openaiKey });
 
-  // ── Build flyer context for the system prompt ────────────────────────────
   const flyerList = flyers.map(f =>
-    `  • "${f.flyerName}" — tracking: ${f.trackingNumber} (${f.totalCalls} calls, ${f.conversions} clients)`
+    `  • "${f.flyerName}" — tracking: ${f.trackingNumber}`
   ).join("\n");
 
   const systemPrompt = [
-    "You are the EDDM spend assistant for Liquid Lawn, a lawn care company.",
-    "Your job is to fill in ad spend amounts — both total per flyer AND per zip code.",
+    "You are an EDDM spend data extractor for Liquid Lawn.",
+    "Your ONLY job is to READ data from screenshots/text and return it as structured JSON.",
+    "You do NOT calculate totals or zip spend — the server does all math. Just extract raw rows.",
     "",
-    "Current flyers loaded in the dashboard:",
-    flyerList || "  (no flyers loaded yet)",
+    "Flyers in the dashboard (for reference):",
+    flyerList || "  (none loaded)",
     "",
-    "═══ ACTUAL DATA FORMAT ═══",
+    "═══ TWO FILE TYPES ═══",
     "",
-    "FILE 1 — Flat spend table (columns: Amount Spent | Tracking Number | Drop)",
-    "  Each row = one mailing event for a tracking number in a given drop.",
-    "  The SAME tracking number may appear multiple times across multiple drops.",
-    "  Example rows:",
-    "    $48,524.16 | 9046592008 | Drop 1",
-    "    $27,148.16 | 9046592008 | Drop 2   ← same tracking, different drop",
-    "    $48,524.16 | 9044201511 | Drop 1",
-    "    $27,148.16 | 9044201511 | Drop 2",
-    "    $27,208.00 | 3862703350 | Drop 2.5",
-    "    $27,208.00 | 3862703350 | Drop 2.5  ← same tracking+drop twice = mailed twice",
-    "  TOTAL spend per tracking = SUM of ALL Amount Spent rows for that tracking number.",
-    "  REP COUNT for (tracking, drop) = number of rows with that exact tracking+drop combination.",
+    "FILE 1 — Flat spend table",
+    "  Columns: Amount Spent | Tracking Number | Drop",
+    "  Each row is ONE mailing event. Extract EVERY row individually — do NOT sum, do NOT aggregate.",
+    "  Example screenshot rows:",
+    "    $48,524.16 | 9046592008 | Drop 1   → extract as-is",
+    "    $27,148.16 | 9046592008 | Drop 2   → extract as-is (same tracking, different drop)",
+    "    $27,208.00 | 3862703350 | Drop 2.5 → extract as-is",
+    "    $27,208.00 | 3862703350 | Drop 2.5 → extract as-is (same tracking+drop again = mailed twice)",
     "",
     "FILE 2 — Sectioned zip cost file",
-    "  Organized in sections. Each section header looks like: 'Drop 1 Zipcode', 'Drop 2 zipcodes', 'Drop 2.5 - zipcodes'",
-    "  Under each header: rows of Zip | Pieces | Amount",
-    "  The Amount column = cost for that zip for ONE mailing of that drop. Pieces is irrelevant.",
-    "  Example:",
-    "    Drop 1 Zipcode",
-    "    Zip   | Pieces | Amount",
-    "    32259 | 28569  | $9,142.08",
-    "    32258 | 16159  | $5,170.88",
-    "    Drop 2 zipcodes",
-    "    32092 | 19979  | $6,393.28",
+    "  Has section headers like 'Drop 1 Zipcode', 'Drop 2 zipcodes', 'Drop 2.5 - zipcodes'",
+    "  Under each header: rows of Zip | Pieces | Amount (Pieces is irrelevant, skip it)",
+    "  Amount = cost for that zip for ONE mailing of that drop.",
+    "  Extract each zip row with its drop section name.",
     "",
-    "═══ COMPUTATION RULES ═══",
+    "TYPE A — User pastes direct spend totals (no screenshots, just text like '9046592008 = $75,000'):",
+    "  → Put directly in spendUpdates. This is the final total, not a raw row.",
     "",
-    "When you have BOTH files (or data shared via text/screenshots in this conversation):",
-    "  1. For each tracking number, identify which drops it appears in (from File 1).",
-    "  2. Rep count for (tracking, drop) = number of File 1 rows with that tracking+drop combo.",
-    "  3. For each drop this tracking is in, look up that drop's zip costs from File 2.",
-    "  4. zip_spend = zip_amount_from_file2 × rep_count_for_that_drop",
-    "  5. Total zip spend per tracking = sum of zip_spend across ALL drops for that tracking.",
-    "  6. Total flyer spend = sum of ALL Amount Spent rows for that tracking in File 1.",
-    "     (Both methods should give the same total — use File 1 total as authoritative.)",
-    "",
-    "═══ THREE INPUT TYPES YOU HANDLE ═══",
-    "",
-    "TYPE A — Direct total spend entry (user pastes amounts or a billing summary):",
-    "  → Extract total spend per tracking number. Return in spendUpdates.",
-    "  → Always update spend even if flyer has 0 clients or 0 conversions.",
-    "",
-    "TYPE B — File 2 only (sectioned zip costs):",
-    "  → Parse each section header to identify the drop name.",
-    "  → Extract zip → cost_per_mailing for each section.",
-    "  → Store mentally. Cannot compute final zip spend yet (need File 1 rep counts).",
-    "  → Reply with what you extracted, ask for File 1 (flat spend table).",
-    "  → Return empty spendUpdates and zipSpendUpdates.",
-    "",
-    "TYPE C — File 1 only (flat spend table):",
-    "  → Sum Amount Spent per tracking for spendUpdates.",
-    "  → Count rep count per (tracking, drop) — store mentally.",
-    "  → Cannot compute zip breakdown yet (need File 2 zip costs).",
-    "  → Reply with totals and rep counts found, ask for File 2 (sectioned zip costs).",
-    "",
-    "TYPE D — BOTH files provided (in same message or from conversation history):",
-    "  → Apply computation rules above.",
-    "  → Return BOTH spendUpdates (total per tracking) AND zipSpendUpdates (per zip breakdown).",
-    "",
-    "═══ AGGREGATION RULE ═══",
-    "  ALWAYS SUM all rows for the same tracking number. Never take just first or last.",
-    "",
-    "═══ RESPONSE FORMAT ═══",
-    "Always respond with ONLY valid JSON — no markdown, no code fences, no extra text:",
+    "═══ RESPONSE FORMAT — ALWAYS valid JSON only, no markdown ═══",
     '{',
-    '  "reply": "Human-readable summary of what you extracted and computed.",',
-    '  "spendUpdates": { "TRACKING_DIGITS_ONLY": TOTAL_AMOUNT_AS_NUMBER },',
-    '  "zipSpendUpdates": { "TRACKING_DIGITS_ONLY": { "ZIPCODE_5DIGITS": AMOUNT_AS_NUMBER } }',
+    '  "reply": "Brief description of what you found in the screenshots.",',
+    '  "spendUpdates": {},',
+    '  "zipSpendUpdates": {},',
+    '  "rawSpendRows": [',
+    '    { "tracking": "9046592008", "drop": "Drop 1", "amount": 48524.16 },',
+    '    { "tracking": "9046592008", "drop": "Drop 2", "amount": 27148.16 }',
+    '  ],',
+    '  "rawZipRows": [',
+    '    { "drop": "Drop 1", "zip": "32259", "amountPerMailing": 9142.08 },',
+    '    { "drop": "Drop 2", "zip": "32092", "amountPerMailing": 6393.28 }',
+    '  ]',
     '}',
     "",
     "RULES:",
-    "• trackingNumber keys = digits only (strip dashes, spaces, parentheses).",
-    "• Zip code keys = 5-digit strings with leading zeros ('32601', '01010'). Never integers.",
-    "• Strip all currency symbols ($, commas) before parsing amounts.",
-    "• NEVER invent or round amounts — use exact numbers from the data.",
-    "• In reply, list each tracking number, total spend, rep counts, and zip breakdown if computed.",
-    "• If missing data, say exactly what you have and what you still need.",
-    "• CRITICAL: Update spend for ANY tracking number regardless of client/conversion count.",
+    "• rawSpendRows: extract EVERY individual row — never sum, never skip duplicates.",
+    "• rawZipRows: extract every zip under every drop section.",
+    "• Strip $ and commas from amounts — return as plain numbers.",
+    "• Tracking numbers: digits only, strip spaces/dashes.",
+    "• Zip codes: 5-digit strings ('32601'). Never integers.",
+    "• spendUpdates and zipSpendUpdates should be empty {} unless TYPE A (direct text entry).",
+    "• If only File 1 visible: fill rawSpendRows, leave rawZipRows empty, ask for File 2.",
+    "• If only File 2 visible: fill rawZipRows, leave rawSpendRows empty, ask for File 1.",
+    "• If both visible: fill both arrays. Server will compute everything.",
+    "• NEVER calculate totals yourself. Extract raw rows only.",
   ].join("\n");
 
-  // ── Convert messages to OpenAI format (with vision support) ─────────────
   const thread: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
     ...messages.map(m => {
       if (m.role === "assistant") {
         return { role: "assistant" as const, content: m.content };
       }
-      // User message — may include one or more screenshots
       if (m.images && m.images.length > 0) {
         return {
           role: "user" as const,
@@ -145,7 +182,7 @@ export async function POST(req: Request) {
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: thread,
-    max_tokens: 1200,
+    max_tokens: 4000,
     response_format: { type: "json_object" },
   });
 
@@ -155,16 +192,37 @@ export async function POST(req: Request) {
     reply?: string;
     spendUpdates?: Record<string, number>;
     zipSpendUpdates?: Record<string, Record<string, number>>;
+    rawSpendRows?: RawSpendRow[];
+    rawZipRows?: RawZipRow[];
   } = {};
   try {
     parsed = JSON.parse(raw);
   } catch {
-    parsed = { reply: raw, spendUpdates: {}, zipSpendUpdates: {} };
+    parsed = { reply: raw };
   }
 
-  return NextResponse.json({
-    reply:           parsed.reply           ?? "Done.",
-    spendUpdates:    parsed.spendUpdates    ?? {},
-    zipSpendUpdates: parsed.zipSpendUpdates ?? {},
-  });
+  // ── Server-side math if we have raw rows ─────────────────────────────────
+  let spendUpdates    = parsed.spendUpdates    ?? {};
+  let zipSpendUpdates = parsed.zipSpendUpdates ?? {};
+  let reply           = parsed.reply           ?? "Done.";
+
+  const spendRows = parsed.rawSpendRows ?? [];
+  const zipRows   = parsed.rawZipRows   ?? [];
+
+  if (spendRows.length > 0 && zipRows.length > 0) {
+    // Both files — compute everything server-side
+    const computed = computeFromRawData(spendRows, zipRows);
+    spendUpdates    = { ...spendUpdates, ...computed.spendUpdates };
+    zipSpendUpdates = { ...zipSpendUpdates, ...computed.zipSpendUpdates };
+    reply = parsed.reply ?? `Computed from ${spendRows.length} spend rows and ${zipRows.length} zip rows. ${computed.summary}`;
+  } else if (spendRows.length > 0) {
+    // File 1 only — sum spend per tracking, no zip breakdown yet
+    for (const r of spendRows) {
+      const t = normalizeTracking(r.tracking);
+      if (!t) continue;
+      spendUpdates[t] = (spendUpdates[t] ?? 0) + r.amount;
+    }
+  }
+
+  return NextResponse.json({ reply, spendUpdates, zipSpendUpdates });
 }
