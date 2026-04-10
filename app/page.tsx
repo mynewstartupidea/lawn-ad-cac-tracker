@@ -2644,7 +2644,7 @@ export default function Home() {
                             </thead>
                             <tbody>
                               {overallRows.map((row, i) => {
-                                const zCac = row.alloc / row.clients;
+                                const zCac = row.clients > 0 ? row.alloc / row.clients : null;
                                 return (
                                   <tr key={row.zip} style={{ borderBottom: `1px solid ${C.border}`, background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
                                     <td style={{ padding: "12px 20px", fontWeight: 700, color: "#0369a1", fontFamily: "monospace" }}>{row.zip}</td>
@@ -2652,7 +2652,9 @@ export default function Home() {
                                     <td style={{ padding: "12px 20px", textAlign: "center", color: C.textSec }}>{row.flyers}</td>
                                     <td style={{ padding: "12px 20px", textAlign: "center", color: C.purple, fontWeight: 600 }}>${row.alloc.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                     <td style={{ padding: "12px 20px", textAlign: "center" }}>
-                                      <span style={{ display: "inline-block", padding: "4px 14px", borderRadius: 20, fontSize: 13, fontWeight: 800, background: zCac < 100 ? C.greenSoft : zCac < 300 ? C.amberSoft : C.redSoft, color: zCac < 100 ? C.green : zCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zCac)}</span>
+                                      {zCac !== null
+                                        ? <span style={{ display: "inline-block", padding: "4px 14px", borderRadius: 20, fontSize: 13, fontWeight: 800, background: zCac < 100 ? C.greenSoft : zCac < 300 ? C.amberSoft : C.redSoft, color: zCac < 100 ? C.green : zCac < 300 ? C.amber : C.red }}>{eddmFmtMoney(zCac)}</span>
+                                        : <span style={{ color: C.textMuted }}>—</span>}
                                     </td>
                                     <td style={{ padding: "12px 20px", fontSize: 11, color: C.textSec, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.flyerNames}>{row.flyerNames}</td>
                                   </tr>
