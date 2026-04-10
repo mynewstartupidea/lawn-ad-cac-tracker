@@ -2384,7 +2384,7 @@ export default function Home() {
                   <div style={{ padding: "12px 32px", background: C.purpleSoft, borderBottom: `1px solid #e9d5ff` }}>
                     <p style={{ fontSize: 12, color: C.purple, fontWeight: 600 }}>
                       {eddmReportTab === "flyer" && <>CAC Formula: <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>Ad Spend ÷ Clients</span> — Flyers without spend show "—" and are still included.</>}
-                      {eddmReportTab === "flyer-zip" && <>Zip allocation: <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>Flyer Spend × (Zip Clients ÷ Flyer Clients)</span> — only paid flyers shown.</>}
+                      {eddmReportTab === "flyer-zip" && <>{Object.keys(eddmZipSpends).length > 0 ? <>Zip spend: <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>Actual zip spend from snapshot</span></> : <>Zip allocation: <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>Flyer Spend × (Zip Clients ÷ Flyer Clients)</span></>} — only paid flyers shown.</>}
                       {eddmReportTab === "overall-zip" && <>Overall zip CAC = <span style={{ fontFamily: "monospace", background: "#ede9fe", padding: "2px 8px", borderRadius: 5 }}>Σ allocated spend ÷ Σ paid client events</span> across all paid flyers.</>}
                     </p>
                   </div>
@@ -2688,43 +2688,62 @@ export default function Home() {
                               return `"${safeName}",${f.trackingNumber},${f.totalCalls},${f.conversions},${cr},${sp > 0 ? sp.toFixed(2) : ""},${cac}`;
                             }).join("\n");
                           } else if (eddmReportTab === "flyer-zip") {
-                            csv = "Flyer Name,Tracking Number,Zip Code,Clients,% of Flyer,Allocated Spend,Zip CAC";
-                            const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0 && f.conversions > 0);
+                            csv = "Flyer Name,Tracking Number,Zip Code,Clients,% of Flyer,Spend Type,Allocated Spend,Zip CAC";
+                            const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0);
                             for (const flyer of paidFlyers) {
-                              const spend = parseFloat(eddmSpends[flyer.flyerName + "||" + flyer.trackingNumber] ?? "") || 0;
-                              const zipMap = new Map<string, number>();
-                              for (const c of flyer.matchedClients) { const z = c.zip || "Unknown"; zipMap.set(z, (zipMap.get(z) ?? 0) + 1); }
-                              for (const [z, cnt] of Array.from(zipMap.entries()).sort((a, b) => b[1] - a[1])) {
-                                const alloc = spend * (cnt / flyer.conversions);
-                                const zCac  = alloc / cnt;
+                              const key       = flyer.flyerName + "||" + flyer.trackingNumber;
+                              const spend     = parseFloat(eddmSpends[key] ?? "") || 0;
+                              const actualZips = eddmZipSpends[key];
+                              const hasActual  = !!actualZips && Object.keys(actualZips).length > 0;
+                              const clientZipMap = new Map<string, number>();
+                              for (const c of flyer.matchedClients) { const z = c.zip || "Unknown"; clientZipMap.set(z, (clientZipMap.get(z) ?? 0) + 1); }
+                              const allZips = new Set<string>([...Array.from(clientZipMap.keys()), ...(hasActual ? Object.keys(actualZips) : [])]);
+                              for (const z of Array.from(allZips).sort()) {
+                                const cnt   = clientZipMap.get(z) ?? 0;
+                                const alloc = hasActual
+                                  ? (actualZips[z] ?? 0)
+                                  : (flyer.conversions > 0 ? spend * (cnt / flyer.conversions) : 0);
+                                const zCac  = cnt > 0 ? alloc / cnt : null;
                                 const safeName = flyer.flyerName.replace(/"/g, '""');
-                                csv += `\n"${safeName}",${flyer.trackingNumber},${z},${cnt},${((cnt / flyer.conversions) * 100).toFixed(1)},${alloc.toFixed(2)},${zCac.toFixed(2)}`;
+                                const pct = flyer.conversions > 0 && cnt > 0 ? ((cnt / flyer.conversions) * 100).toFixed(1) : "0.0";
+                                csv += `\n"${safeName}",${flyer.trackingNumber},${z},${cnt},${pct},${hasActual ? "Actual" : "Estimated"},${alloc.toFixed(2)},${zCac !== null ? zCac.toFixed(2) : ""}`;
                               }
                             }
                           } else {
-                            csv = "Zip Code,Paid Clients,Flyers,Allocated Spend,Zip CAC,Flyer Names";
-                            const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0 && f.conversions > 0);
-                            const zipAllocated = new Map<string, number>();
+                            csv = "Zip Code,Paid Clients,Flyers,Spend Type,Allocated Spend,Zip CAC,Flyer Names";
+                            const paidFlyers = eddmResponse.results.filter(f => (parseFloat(eddmSpends[f.flyerName + "||" + f.trackingNumber] ?? "") || 0) > 0);
+                            const zipAllocated    = new Map<string, number>();
                             const zipClientEvents = new Map<string, number>();
-                            const zipFlyers = new Map<string, Set<string>>();
+                            const zipFlyerSet     = new Map<string, Set<string>>();
+                            const zipHasActual    = new Map<string, boolean>();
                             for (const flyer of paidFlyers) {
-                              const spend = parseFloat(eddmSpends[flyer.flyerName + "||" + flyer.trackingNumber] ?? "") || 0;
-                              const zipMap = new Map<string, number>();
-                              for (const c of flyer.matchedClients) { const z = c.zip || "Unknown"; zipMap.set(z, (zipMap.get(z) ?? 0) + 1); }
-                              for (const [z, cnt] of zipMap.entries()) {
-                                zipAllocated.set(z, (zipAllocated.get(z) ?? 0) + spend * (cnt / flyer.conversions));
+                              const key        = flyer.flyerName + "||" + flyer.trackingNumber;
+                              const spend      = parseFloat(eddmSpends[key] ?? "") || 0;
+                              const actualZips = eddmZipSpends[key];
+                              const hasActual  = !!actualZips && Object.keys(actualZips).length > 0;
+                              const clientZipMap = new Map<string, number>();
+                              for (const c of flyer.matchedClients) { const z = c.zip || "Unknown"; clientZipMap.set(z, (clientZipMap.get(z) ?? 0) + 1); }
+                              const allZips = new Set<string>([...Array.from(clientZipMap.keys()), ...(hasActual ? Object.keys(actualZips) : [])]);
+                              for (const z of allZips) {
+                                const cnt   = clientZipMap.get(z) ?? 0;
+                                const alloc = hasActual
+                                  ? (actualZips[z] ?? 0)
+                                  : (flyer.conversions > 0 ? spend * (cnt / flyer.conversions) : 0);
+                                zipAllocated.set(z,    (zipAllocated.get(z)    ?? 0) + alloc);
                                 zipClientEvents.set(z, (zipClientEvents.get(z) ?? 0) + cnt);
-                                if (!zipFlyers.has(z)) zipFlyers.set(z, new Set());
-                                zipFlyers.get(z)!.add(flyer.flyerName || "Unknown");
+                                if (!zipFlyerSet.has(z)) zipFlyerSet.set(z, new Set());
+                                zipFlyerSet.get(z)!.add(flyer.flyerName || "Unknown");
+                                if (hasActual) zipHasActual.set(z, true);
                               }
                             }
                             const rows = Array.from(zipAllocated.entries()).sort((a, b) => (zipClientEvents.get(b[0]) ?? 0) - (zipClientEvents.get(a[0]) ?? 0));
                             for (const [z, alloc] of rows) {
-                              const clients = zipClientEvents.get(z) ?? 0;
-                              const flyers  = zipFlyers.get(z)?.size ?? 0;
-                              const names   = Array.from(zipFlyers.get(z) ?? []).join("; ");
-                              const safeNames = names.replace(/"/g, '""');
-                              csv += `\n${z},${clients},${flyers},${alloc.toFixed(2)},${(alloc / clients).toFixed(2)},"${safeNames}"`;
+                              const clients    = zipClientEvents.get(z) ?? 0;
+                              const flyerCount = zipFlyerSet.get(z)?.size ?? 0;
+                              const names      = Array.from(zipFlyerSet.get(z) ?? []).join("; ").replace(/"/g, '""');
+                              const spendType  = zipHasActual.get(z) ? "Actual" : "Estimated";
+                              const zCac       = clients > 0 ? (alloc / clients).toFixed(2) : "";
+                              csv += `\n${z},${clients},${flyerCount},${spendType},${alloc.toFixed(2)},${zCac},"${names}"`;
                             }
                           }
                           const blob = new Blob([csv], { type: "text/csv" });
