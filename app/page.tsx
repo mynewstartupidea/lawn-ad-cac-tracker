@@ -571,8 +571,8 @@ export default function Home() {
 
   const fetchSupabase = useCallback(async () => {
     const [lr, sr, spr] = await Promise.all([
-      supabase.from("leads").select("*").order("created_at", { ascending: false }),
-      supabase.from("sales").select("*").order("created_at", { ascending: false }),
+      supabase.from("leads").select("*").order("created_at", { ascending: false }).limit(10000),
+      supabase.from("sales").select("*").order("created_at", { ascending: false }).limit(10000),
       supabase.from("ad_spends").select("*"),
     ]);
     if (!lr.error)  setLeads(lr.data ?? []);
