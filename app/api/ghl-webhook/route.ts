@@ -13,6 +13,38 @@ function isReal(val: unknown): val is string {
   return true;
 }
 
+// Extract source tag from GHL tags array.
+// Looks for known source tags: FBFL, FBGA, Google, etc.
+// Falls back to first tag found, then "ghl".
+const SOURCE_TAG_PATTERNS = [
+  /^FB[-_]?FL$/i,   // FBFL, FB-FL, FB_FL → FB Florida
+  /^FB[-_]?GA$/i,   // FBGA, FB-GA → FB Georgia
+  /^FB[-_]?FL/i,    // any tag starting with FBFL
+  /^FB[-_]?GA/i,    // any tag starting with FBGA
+  /^google$/i,      // Google
+  /^gg$/i,          // GG shorthand
+  /^ig$/i,          // Instagram
+  /^organic$/i,     // Organic
+  /^eddm$/i,        // EDDM mailer
+];
+
+function extractSourceFromTags(tags: unknown): string {
+  if (!Array.isArray(tags) || tags.length === 0) return "ghl";
+  const tagStrings = tags.map(t => String(t).trim()).filter(Boolean);
+
+  // Check for known source tag patterns first
+  for (const pattern of SOURCE_TAG_PATTERNS) {
+    const match = tagStrings.find(t => pattern.test(t));
+    if (match) return match.toUpperCase();
+  }
+
+  // Fall back to first tag that looks like a source (short, uppercase-ish)
+  const shortTag = tagStrings.find(t => t.length <= 10);
+  if (shortTag) return shortTag.toUpperCase();
+
+  return "ghl";
+}
+
 // Extract ad name from the GHL webhook payload.
 // GHL can deliver it in several different places depending on the workflow setup.
 function extractAdName(body: Record<string, unknown>): string {
@@ -66,15 +98,18 @@ export async function POST(req: Request) {
     const firstName = String(body.first_name ?? body.name ?? body.full_name ?? "Unknown").trim();
     const phone = String(body.phone ?? "").trim();
     const adName = extractAdName(body);
+    const source = extractSourceFromTags(body.tags);
 
-    // Log the raw ad_name value GHL sent so you can debug in Vercel logs
+    // Log everything — check Vercel function logs to debug missing leads
     const attr = body.attributionSource as Record<string, unknown> | undefined;
     console.log("[GHL] received →", {
       email,
-      raw_ad_name: body.ad_name,             // from {{contact.ad_name}}
-      utm_content: attr?.utmContent ?? null, // from utm_content={{ad.name}} ← should be ad name
+      tags: body.tags,
+      resolved_source: source,
+      raw_ad_name: body.ad_name,
+      utm_content: attr?.utmContent ?? null,
       utm_campaign: attr?.utmCampaign ?? null,
-      resolved_ad_name: adName,              // final value stored in DB
+      resolved_ad_name: adName,
     });
 
     if (!email || !email.includes("@")) {
@@ -93,7 +128,7 @@ export async function POST(req: Request) {
     }
 
     const { error } = await supabase.from("leads").insert([
-      { first_name: firstName, email, phone, ad_name: adName, source: "ghl" },
+      { first_name: firstName, email, phone, ad_name: adName, source },
     ]);
 
     if (error) {
