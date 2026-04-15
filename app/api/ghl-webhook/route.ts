@@ -98,7 +98,10 @@ export async function POST(req: Request) {
     const firstName = String(body.first_name ?? body.name ?? body.full_name ?? "Unknown").trim();
     const phone = String(body.phone ?? "").trim();
     const adName = extractAdName(body);
-    const source = extractSourceFromTags(body.tags);
+    // Source priority: explicit source field > tags array > fallback
+    const source = isReal(body.source)
+      ? (body.source as string).trim().toUpperCase()
+      : extractSourceFromTags(body.tags);
 
     // Log everything — check Vercel function logs to debug missing leads
     const attr = body.attributionSource as Record<string, unknown> | undefined;
