@@ -117,7 +117,6 @@ export async function POST(req: Request) {
       const address = [
         col(row, "PhysicalS", "Physical Street", "Street", "Address"),
         col(row, "PhysicalC", "Physical City",   "City"),
-        rawZip,
       ].filter(Boolean).join(", ");
 
       // Collect all valid phones for this client (cell first = highest priority)

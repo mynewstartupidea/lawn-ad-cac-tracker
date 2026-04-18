@@ -468,7 +468,7 @@ export default function Home() {
 
   // Controls
   const [dateRange,  setDateRange]  = useState<DateRange>("30d");
-  const [account,    setAccount]    = useState<Account>("all");
+  const [account,    setAccount]    = useState<Account>("florida");
   const [adFilter,   setAdFilter]   = useState<string>("all");
   const [leadFilter, setLeadFilter] = useState<LeadFilter>("all");
   const [search,     setSearch]     = useState("");
@@ -2100,13 +2100,32 @@ export default function Home() {
                                 )}
 
                                 {flyer.conversions > 0 && (
-                                  <button
-                                    onClick={() => toggleEddm(key)}
-                                    style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, color: C.blue, background: C.blueSoft, border: "none", borderRadius: 8, padding: "6px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
-                                  >
-                                    {isOpen ? "Hide clients" : `View ${flyer.conversions} client${flyer.conversions !== 1 ? "s" : ""}`}
-                                    <span style={{ fontSize: 9, display: "inline-block", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
-                                  </button>
+                                  <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+                                    <button
+                                      onClick={() => {
+                                        const headers = "Name,Matched Phone,Cell,Home,Work,Address,Zip Code";
+                                        const rows = flyer.matchedClients.map(c => {
+                                          const safe = (s: string) => `"${(s || "").replace(/"/g, '""')}"`;
+                                          return [safe(c.name), safe(eddmFmtPhone(c.matchedPhone)), safe(c.cellPhone ? eddmFmtPhone(c.cellPhone) : ""), safe(c.homePhone ? eddmFmtPhone(c.homePhone) : ""), safe(c.workPhone ? eddmFmtPhone(c.workPhone) : ""), safe(c.address), safe(c.zip)].join(",");
+                                        });
+                                        const csv = headers + "\n" + rows.join("\n");
+                                        const a = document.createElement("a");
+                                        a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+                                        a.download = `${flyer.flyerName.replace(/[^a-z0-9]/gi, "_")}_clients.csv`;
+                                        a.click();
+                                      }}
+                                      style={{ fontSize: 12, fontWeight: 600, color: C.green, background: C.greenSoft, border: "none", borderRadius: 8, padding: "6px 14px", cursor: "pointer" }}
+                                    >
+                                      ↓ CSV
+                                    </button>
+                                    <button
+                                      onClick={() => toggleEddm(key)}
+                                      style={{ fontSize: 12, fontWeight: 600, color: C.blue, background: C.blueSoft, border: "none", borderRadius: 8, padding: "6px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+                                    >
+                                      {isOpen ? "Hide clients" : `View ${flyer.conversions} client${flyer.conversions !== 1 ? "s" : ""}`}
+                                      <span style={{ fontSize: 9, display: "inline-block", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -2194,7 +2213,7 @@ export default function Home() {
                                   <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                                     <thead>
                                       <tr style={{ background: "#f8fafc" }}>
-                                        {["#", "Name", "Matched Phone", "Cell", "Home", "Work", ...(eddmShowZip ? ["Zip"] : []), "Address"].map(h => (
+                                        {["#", "Name", "Matched Phone", "Cell", "Home", "Work", "Address", "Zip Code"].map(h => (
                                           <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMuted, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
                                         ))}
                                       </tr>
@@ -2208,10 +2227,8 @@ export default function Home() {
                                           <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.cellPhone ? eddmFmtPhone(client.cellPhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
                                           <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.homePhone ? eddmFmtPhone(client.homePhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
                                           <td style={{ padding: "9px 16px", fontFamily: "monospace", color: C.textSec }}>{client.workPhone ? eddmFmtPhone(client.workPhone) : <span style={{ color: C.textMuted }}>—</span>}</td>
-                                          {eddmShowZip && (
-                                            <td style={{ padding: "9px 16px", fontFamily: "monospace", fontWeight: 600, color: "#0369a1" }}>{client.zip || <span style={{ color: C.textMuted }}>—</span>}</td>
-                                          )}
-                                          <td style={{ padding: "9px 16px", color: C.textSec, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{client.address || <span style={{ color: C.textMuted }}>—</span>}</td>
+                                          <td style={{ padding: "9px 16px", color: C.textSec, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={client.address}>{client.address || <span style={{ color: C.textMuted }}>—</span>}</td>
+                                          <td style={{ padding: "9px 16px", fontFamily: "monospace", fontWeight: 600, color: "#0369a1" }}>{client.zip || <span style={{ color: C.textMuted }}>—</span>}</td>
                                         </tr>
                                       ))}
                                     </tbody>
