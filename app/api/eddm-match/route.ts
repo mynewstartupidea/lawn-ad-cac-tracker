@@ -114,10 +114,12 @@ export async function POST(req: Request) {
       const zipDigits = rawZip.replace(/\D/g, "").slice(0, 5);
       const zip = zipDigits.length >= 3 ? zipDigits.padStart(5, "0") : "";
 
-      const address = [
-        col(row, "PhysicalS", "Physical Street", "Street", "Address"),
-        col(row, "PhysicalC", "Physical City",   "City"),
-      ].filter(Boolean).join(", ");
+      const address =
+        col(row, "PhysicalAddress", "Physical Address") ||
+        [
+          col(row, "PhysicalS", "Physical Street", "Street", "Address"),
+          col(row, "PhysicalC", "Physical City",   "City"),
+        ].filter(Boolean).join(", ");
 
       // Collect all valid phones for this client (cell first = highest priority)
       const phones = [cellPhone, homePhone, workPhone].filter(p => p.length >= 10);
