@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { supabase } from "../../lib/supabase";
 import { extractSoldEmail } from "../../lib/extractSoldEmail";
 
@@ -59,7 +60,8 @@ export async function POST(req: Request) {
 
     if (text) {
       console.log("[Slack] raw text:", JSON.stringify(text));
-      await handleSoldMessage(text);
+      // Respond to Slack immediately — must reply within 3s or Slack disables the subscription
+      waitUntil(handleSoldMessage(text));
     }
 
     return NextResponse.json({ ok: true });
