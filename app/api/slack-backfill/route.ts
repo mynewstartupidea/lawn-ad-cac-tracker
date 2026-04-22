@@ -63,20 +63,30 @@ export async function POST() {
   const messages = await fetchAllMessages(token, channelId);
   console.log(`[Backfill] fetched ${messages.length} messages from Slack`);
 
-  const toInsert: { email: string; status: string }[] = [];
+  const toInsert: { email: string; status: string; created_at: string }[] = [];
 
   for (const msg of messages) {
-    // Only process regular user messages (skip bot messages, channel joins, etc.)
-    if (msg.subtype) continue;
-    const text = msg.text;
+    let text: string | undefined;
+
+    if (!msg.subtype) {
+      text = msg.text;
+    } else if (msg.subtype === "message_changed") {
+      text = (msg as unknown as { message?: { text?: string } }).message?.text;
+    } else {
+      continue; // skip bot messages, joins, etc.
+    }
+
     if (!text) continue;
 
     const email = extractSoldEmail(text);
     if (!email) continue;
     if (existing.has(email)) continue;
 
-    toInsert.push({ email, status: "sold" });
-    existing.add(email); // prevent duplicates within this batch
+    // Preserve real sold date from Slack timestamp
+    const created_at = new Date(parseFloat(msg.ts) * 1000).toISOString();
+
+    toInsert.push({ email, status: "sold", created_at });
+    existing.add(email);
   }
 
   if (toInsert.length === 0) {
