@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../lib/supabase";
+import { sendLeadEvent } from "../../lib/metaCapi";
+import { AD_ACCOUNTS } from "../../lib/adAccounts";
 
 // Checks whether a value is a real non-empty string.
 // Filters out:
@@ -138,6 +140,16 @@ export async function POST(req: Request) {
       console.error("[GHL] insert error:", error);
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
+
+    // Fire server-side Lead event to Meta CAPI — improves match quality from
+    // ~3/10 (browser pixel alone) to 8-9/10 by sending email + phone + name
+    sendLeadEvent({
+      pixelId:         AD_ACCOUNTS.florida.pixelId,
+      email,
+      phone:           phone || undefined,
+      firstName:       firstName !== "Unknown" ? firstName : undefined,
+      eventSourceUrl:  AD_ACCOUNTS.florida.landingUrl.split("?")[0],
+    }).catch(err => console.error("[GHL] CAPI lead error:", err));
 
     return NextResponse.json({ success: true, ad_name: adName });
   } catch (err) {
