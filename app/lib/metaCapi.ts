@@ -19,12 +19,13 @@ function hashPhone(phone: string): string {
 }
 
 interface CapiEventOptions {
-  pixelId:    string;
-  email:      string;
-  phone?:     string;
-  value:      number;
-  currency?:  string;
-  eventTime?: number;
+  pixelId:         string;
+  email:           string;
+  phone?:          string;
+  value:           number;
+  currency?:       string;
+  eventTime?:      number;
+  eventSourceUrl?: string;
 }
 
 export async function sendSoldConversion(opts: CapiEventOptions): Promise<{ ok: boolean; error?: string }> {
@@ -47,12 +48,11 @@ export async function sendSoldConversion(opts: CapiEventOptions): Promise<{ ok: 
   const payload = {
     data: [
       {
-        event_name:    "Purchase",
-        event_time:    eventTime,
-        event_id:      eventId,
-        // "crm" tells Meta this is a CRM conversion (lead → sold), enabling
-        // "Maximize number of conversion leads" optimization on campaigns
-        action_source: "crm",
+        event_name:       "Purchase",
+        event_time:       eventTime,
+        event_id:         eventId,
+        action_source:    "website",
+        event_source_url: "https://www.liquid-lawn.com",
         custom_data: {
           lead_event_source: "Liquid Lawn CRM",
           value:             opts.value,
