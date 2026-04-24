@@ -2,6 +2,26 @@ import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { supabase } from "../../lib/supabase";
 import { extractSoldEmail } from "../../lib/extractSoldEmail";
+import { sendSoldConversion } from "../../lib/metaCapi";
+import { AD_ACCOUNTS } from "../../lib/adAccounts";
+
+// Determine sale value + pixel based on which account the lead came from.
+// Florida ads contain "FI" or "Fl", Georgia ads contain "GA".
+// If unknown, fire to both pixels.
+function resolveAccount(adName: string | null): { pixelId: string; value: number }[] {
+  const name = (adName ?? "").toUpperCase();
+  if (name.includes(" GA ") || name.startsWith("GA")) {
+    return [{ pixelId: AD_ACCOUNTS.georgia.pixelId, value: 19 }];
+  }
+  if (name.includes(" FL") || name.includes(" FI")) {
+    return [{ pixelId: AD_ACCOUNTS.florida.pixelId, value: 99 }];
+  }
+  // Unknown — fire to both
+  return [
+    { pixelId: AD_ACCOUNTS.florida.pixelId, value: 99 },
+    { pixelId: AD_ACCOUNTS.georgia.pixelId, value: 19 },
+  ];
+}
 
 async function handleSoldMessage(text: string) {
   const email = extractSoldEmail(text);
@@ -21,15 +41,39 @@ async function handleSoldMessage(text: string) {
     return;
   }
 
+  // Look up lead to get phone + ad_name for pixel routing
+  const { data: lead } = await supabase
+    .from("leads")
+    .select("phone, ad_name")
+    .eq("email", email)
+    .maybeSingle() as { data: { phone?: string; ad_name?: string } | null };
+
   const { error } = await supabase
     .from("sales")
     .insert([{ email, status: "sold" }]);
 
   if (error) {
     console.error("[Slack] insert error for", email, error);
-  } else {
-    console.log("[Slack] sale recorded:", email);
+    return;
   }
+
+  console.log("[Slack] sale recorded:", email);
+
+  // Fire conversion event(s) to Meta CAPI
+  const targets = resolveAccount(lead?.ad_name ?? null);
+  await Promise.all(
+    targets.map(t =>
+      sendSoldConversion({
+        pixelId:        t.pixelId,
+        email,
+        phone:          lead?.phone,
+        value:          t.value,
+        eventSourceUrl: t.pixelId === AD_ACCOUNTS.georgia.pixelId
+          ? AD_ACCOUNTS.georgia.landingUrl.split("?")[0]
+          : AD_ACCOUNTS.florida.landingUrl.split("?")[0],
+      })
+    )
+  );
 }
 
 export async function POST(req: Request) {

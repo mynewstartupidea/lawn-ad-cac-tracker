@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/fb-keepalive",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}
