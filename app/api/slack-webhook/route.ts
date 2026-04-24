@@ -13,7 +13,7 @@ function resolveAccount(adName: string | null): { pixelId: string; value: number
   if (name.includes(" GA ") || name.startsWith("GA")) {
     return [{ pixelId: AD_ACCOUNTS.georgia.pixelId, value: 19 }];
   }
-  if (name.includes(" FL") || name.includes(" FI")) {
+  if (name.startsWith("FL") || name.startsWith("FI") || name.includes(" FL") || name.includes(" FI")) {
     return [{ pixelId: AD_ACCOUNTS.florida.pixelId, value: 99 }];
   }
   // Unknown — fire to both
@@ -64,13 +64,10 @@ async function handleSoldMessage(text: string) {
   await Promise.all(
     targets.map(t =>
       sendSoldConversion({
-        pixelId:        t.pixelId,
+        pixelId: t.pixelId,
         email,
-        phone:          lead?.phone,
-        value:          t.value,
-        eventSourceUrl: t.pixelId === AD_ACCOUNTS.georgia.pixelId
-          ? AD_ACCOUNTS.georgia.landingUrl.split("?")[0]
-          : AD_ACCOUNTS.florida.landingUrl.split("?")[0],
+        phone:   lead?.phone,
+        value:   t.value,
       })
     )
   );

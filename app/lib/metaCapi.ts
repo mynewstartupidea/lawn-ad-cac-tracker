@@ -12,19 +12,19 @@ function hashEmail(email: string): string {
 }
 
 function hashPhone(phone: string): string {
-  // Strip everything except digits
-  const digits = phone.replace(/\D/g, "");
+  let digits = phone.replace(/\D/g, "");
+  // Meta requires E.164 — prepend US country code if we have a bare 10-digit number
+  if (digits.length === 10) digits = "1" + digits;
   return sha256(digits);
 }
 
 interface CapiEventOptions {
-  pixelId:        string;
-  email:          string;
-  phone?:         string;
-  value:          number;
-  currency?:      string;
-  eventTime?:     number;
-  eventSourceUrl?: string;
+  pixelId:    string;
+  email:      string;
+  phone?:     string;
+  value:      number;
+  currency?:  string;
+  eventTime?: number;
 }
 
 export async function sendSoldConversion(opts: CapiEventOptions): Promise<{ ok: boolean; error?: string }> {
@@ -41,16 +41,19 @@ export async function sendSoldConversion(opts: CapiEventOptions): Promise<{ ok: 
     userData.ph = [hashPhone(opts.phone)];
   }
 
-  // Exact payload format Meta specified for CRM conversion events
+  // event_id deduplicates against any browser pixel Purchase events for the same user
+  const eventId = sha256(`${opts.email}-${eventTime}-${opts.pixelId}`);
+
   const payload = {
     data: [
       {
         event_name:    "Purchase",
         event_time:    eventTime,
-        action_source:    "website",
-        event_source_url: opts.eventSourceUrl ?? "https://www.liquid-lawn.com",
+        event_id:      eventId,
+        // "crm" tells Meta this is a CRM conversion (lead → sold), enabling
+        // "Maximize number of conversion leads" optimization on campaigns
+        action_source: "crm",
         custom_data: {
-          event_source:      "crm",
           lead_event_source: "Liquid Lawn CRM",
           value:             opts.value,
           currency:          opts.currency ?? "USD",

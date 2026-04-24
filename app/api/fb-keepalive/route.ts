@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 // Rotates through different FB API calls each run to simulate genuine usage
 // and keep the app active so Meta doesn't revoke access due to inactivity.
 
-const BASE = "https://graph.facebook.com/v21.0";
+const BASE = "https://graph.facebook.com/v25.0";
 
 type FbError = { message: string };
 

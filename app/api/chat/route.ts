@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { AD_ACCOUNTS, AdAccount } from "../../lib/adAccounts";
 
-const FB_BASE = "https://graph.facebook.com/v21.0";
+const FB_BASE = "https://graph.facebook.com/v25.0";
 
 // Extract lead count from FB actions array — mirrors what Ads Manager shows as "Results"
 function extractLeads(actions: { action_type: string; value: string }[]): number {
