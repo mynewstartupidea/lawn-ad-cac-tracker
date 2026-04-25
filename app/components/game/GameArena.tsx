@@ -8,11 +8,52 @@ import {
   type GameState, type GameEvent, type PlayerId, type Unit, type Tower, type CardType,
 } from "./engine";
 import { CARD_DEFS, ALL_CARDS, makeStartingHand, nextCard } from "./cards";
+import type { BotDifficulty } from "./GameHub";
+
+// ─── Bot AI ───────────────────────────────────────────────────────────────────
+
+function botDelay(diff: BotDifficulty): number {
+  if (diff === "easy")   return 7000 + Math.random() * 5000;   // 7-12s
+  if (diff === "medium") return 4000 + Math.random() * 3000;   // 4-7s
+  return 1800 + Math.random() * 2200;                           // 1.8-4s (hard)
+}
+
+function botPickCard(hand: CardType[], elixir: number, state: GameState, diff: BotDifficulty): CardType | null {
+  const affordable = hand.filter(c => CARD_DEFS[c].cost <= Math.floor(elixir));
+  if (affordable.length === 0) return null;
+  if (diff === "easy") return affordable[Math.floor(Math.random() * affordable.length)];
+
+  const humanUnits = state.units.filter(u => u.alive && u.owner === "p1");
+  const humanHasGiant = humanUnits.some(u => u.type === "giant");
+  const humanHasMass  = humanUnits.length >= 3;
+
+  if (diff === "hard") {
+    if (humanHasGiant && affordable.includes("fireball")) return "fireball";
+    if (humanHasMass) {
+      const aoe = affordable.filter(c => CARD_DEFS[c].aoe);
+      if (aoe.length) return aoe[Math.floor(Math.random() * aoe.length)];
+    }
+  }
+  // medium + hard fallback: most expensive affordable card
+  return affordable.sort((a, b) => CARD_DEFS[b].cost - CARD_DEFS[a].cost)[0];
+}
+
+function botPickX(state: GameState, diff: BotDifficulty): number {
+  const lanes = [72, 180, 288];
+  if (diff === "easy") return lanes[Math.floor(Math.random() * lanes.length)];
+  const humanUnits = state.units.filter(u => u.alive && u.owner === "p1");
+  if (!humanUnits.length || diff === "medium") return lanes[Math.floor(Math.random() * lanes.length)];
+  // Hard: pick the lane with most human units
+  const counts = lanes.map(lx => ({ lx, n: humanUnits.filter(u => Math.abs(u.x - lx) < 70).length }));
+  counts.sort((a, b) => b.n - a.n);
+  return counts[0].lx;
+}
 
 interface Props {
   roomId: string;
   myInfo: { id: string; name: string; role: "p1" | "p2" };
-  channel: RealtimeChannel;
+  channel: RealtimeChannel | null;
+  botDifficulty?: BotDifficulty;
   onLeave: () => void;
 }
 
@@ -535,7 +576,7 @@ function drawTerrain(ctx: CanvasRenderingContext2D, W: number, H: number, scale:
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function GameArena({ roomId: _roomId, myInfo, channel, onLeave }: Props) {
+export default function GameArena({ roomId: _roomId, myInfo, channel, botDifficulty, onLeave }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GameState>(initGameState());
@@ -544,6 +585,10 @@ export default function GameArena({ roomId: _roomId, myInfo, channel, onLeave }:
   const pendingEventsRef = useRef<GameEvent[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const prevUnitsRef = useRef<Set<string>>(new Set());
+  // Bot refs (only used when botDifficulty is set)
+  const botHandRef      = useRef<CardType[]>(makeStartingHand());
+  const botDeckRef      = useRef<CardType[]>(ALL_CARDS.slice(4));
+  const botNextPlayMs   = useRef<number>(botDifficulty ? botDelay(botDifficulty) : Infinity);
 
   const [gameState, setGameState] = useState<GameState>(stateRef.current);
   const [hand, setHand] = useState<CardType[]>(makeStartingHand());
@@ -580,8 +625,9 @@ export default function GameArena({ roomId: _roomId, myInfo, channel, onLeave }:
     return () => window.removeEventListener("resize", resize);
   }, []);
 
-  // ─── Realtime ───────────────────────────────────────────────────────────────
+  // ─── Realtime (multiplayer only) ────────────────────────────────────────────
   useEffect(() => {
+    if (!channel) return;
     const sub = channel.on("broadcast", { event: "deploy_card" }, ({ payload }: { payload: GameEvent }) => {
       if (payload.owner !== myRole) {
         pendingEventsRef.current.push(payload);
@@ -695,6 +741,35 @@ export default function GameArena({ roomId: _roomId, myInfo, channel, onLeave }:
       const dt = Math.min(now - lastTickRef.current, 100);
       lastTickRef.current = now;
 
+      // Bot AI tick (inject events before game tick)
+      if (botDifficulty) {
+        const s0 = stateRef.current;
+        if (s0.phase !== "ended" && s0.gameMs >= botNextPlayMs.current) {
+          const botElixir = s0.elixir["p2"];
+          const card = botPickCard(botHandRef.current, botElixir, s0, botDifficulty);
+          if (card) {
+            const bx = botPickX(s0, botDifficulty);
+            const by = 40 + Math.random() * (RIVER_Y - 80);
+            const count = Math.max(1, CARD_DEFS[card].count);
+            const unitIds = Array.from({ length: count }, (_, i) =>
+              `p2-bot-${card}-${Math.round(s0.gameMs)}-${i}`
+            );
+            const ev: GameEvent = {
+              kind: "deploy", owner: "p2", card,
+              x: bx, y: Math.max(35, Math.min(RIVER_Y - 25, by)),
+              gameMs: s0.gameMs, unitIds,
+            };
+            pendingEventsRef.current.push(ev);
+            const { hand: nh, deck: nd } = nextCard(botHandRef.current, botDeckRef.current, card);
+            botHandRef.current = nh; botDeckRef.current = nd;
+            botNextPlayMs.current = s0.gameMs + botDelay(botDifficulty);
+          } else {
+            // Can't afford anything — try again in 1 second
+            botNextPlayMs.current = s0.gameMs + 1000;
+          }
+        }
+      }
+
       // Game tick
       const events = pendingEventsRef.current.splice(0);
       stateRef.current = tickGame(stateRef.current, dt, events);
@@ -771,7 +846,7 @@ export default function GameArena({ roomId: _roomId, myInfo, channel, onLeave }:
     };
 
     pendingEventsRef.current.push(ev);
-    channel.send({ type: "broadcast", event: "deploy_card", payload: ev });
+    if (channel) channel.send({ type: "broadcast", event: "deploy_card", payload: ev });
 
     const { hand: newHand, deck: newDeck } = nextCard(handRef.current, deckRef.current, card);
     setHand(newHand);
@@ -885,6 +960,25 @@ export default function GameArena({ roomId: _roomId, myInfo, channel, onLeave }:
         .card-btn.sel { animation: card-select 0.8s ease-in-out infinite alternate; transform: translateY(-10px) scale(1.1) !important; }
         .card-btn:active:not(:disabled) { transform: scale(0.95) !important; }
       `}</style>
+
+      {/* ── Bot difficulty badge ──────────────────────────────────────────── */}
+      {botDifficulty && (() => {
+        const cfg = { easy:{emoji:"🌿",col:"#10b981"}, medium:{emoji:"⚔️",col:"#3b82f6"}, hard:{emoji:"💀",col:"#ef4444"} }[botDifficulty];
+        return (
+          <div style={{
+            width:"100%", maxWidth:canvasW, textAlign:"center",
+            padding:"2px 0 0",
+          }}>
+            <span style={{
+              background:`${cfg.col}22`, border:`1px solid ${cfg.col}55`,
+              borderRadius:8, padding:"2px 10px", fontSize:10, fontWeight:700,
+              color:cfg.col, letterSpacing:"0.06em",
+            }}>
+              {cfg.emoji} vs {botDifficulty.toUpperCase()} AI
+            </span>
+          </div>
+        );
+      })()}
 
       {/* ── Top HUD ────────────────────────────────────────────────────────── */}
       <div style={{
