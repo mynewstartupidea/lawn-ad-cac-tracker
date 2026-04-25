@@ -68,7 +68,20 @@ type DateRange  = "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
 type Account    = "all" | "florida" | "georgia";
-type Tab        = "cac" | "ads" | "eddm";
+type Tab        = "cac" | "ads" | "eddm" | "drive" | "game";
+
+interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  createdTime?: string;
+}
+interface DriveAdMatch {
+  file: DriveFile;
+  launched: boolean;
+  fbAdName?: string;
+  matchScore: number;
+}
 type AdTab      = "chat" | "metrics" | "assets";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -140,6 +153,17 @@ function relativeTime(d: Date) {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ago`;
   return `${Math.floor(m / 60)}h ago`;
+}
+
+function extractDriveFolderId(url: string): string | null {
+  // Handles: https://drive.google.com/drive/folders/FOLDER_ID
+  //          https://drive.google.com/drive/u/0/folders/FOLDER_ID
+  //          or just the raw ID pasted directly
+  const match = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+  // raw folder ID (no slashes, looks like a Drive ID)
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(url.trim())) return url.trim();
+  return null;
 }
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
@@ -550,6 +574,22 @@ export default function Home() {
   const eddmChatEndRef = useRef<HTMLDivElement>(null);
   const eddmImgInputRef = useRef<HTMLInputElement>(null);
 
+  // Drive Ad Status state
+  const [driveMatches,   setDriveMatches]   = useState<DriveAdMatch[] | null>(null);
+  const [driveLoading,   setDriveLoading]   = useState(false);
+  const [driveError,     setDriveError]     = useState<string | null>(null);
+  const [driveFilter,    setDriveFilter]    = useState<"all" | "launched" | "not_launched">("all");
+  const [driveSummary,   setDriveSummary]   = useState<{ total: number; launched: number; notLaunched: number } | null>(null);
+  const [driveFolderUrl, setDriveFolderUrl] = useState<string>("");
+  const [driveFolderInput, setDriveFolderInput] = useState<string>("");
+
+  // Load saved Drive folder URL from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem("driveFolderUrl") ?? "";
+    setDriveFolderUrl(saved);
+    setDriveFolderInput(saved);
+  }, []);
+
   // Relative time ticker
   useEffect(() => {
     if (!lastSynced) return;
@@ -921,6 +961,25 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
+  // Load Drive ad status when tab is active and a folder URL is saved
+  useEffect(() => {
+    if (tab !== "drive" || driveMatches !== null || driveLoading || !driveFolderUrl) return;
+    const folderId = extractDriveFolderId(driveFolderUrl);
+    if (!folderId) return;
+    setDriveLoading(true);
+    setDriveError(null);
+    fetch(`/api/drive-ads?folderId=${encodeURIComponent(folderId)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { setDriveError(data.error); return; }
+        setDriveMatches(data.matches ?? []);
+        setDriveSummary(data.summary ?? null);
+      })
+      .catch(() => setDriveError("Failed to fetch Drive data"))
+      .finally(() => setDriveLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, driveFolderUrl]);
+
   // ─── Table header style ───────────────────────────────────────────────────
 
   const thStyle: React.CSSProperties = {
@@ -954,11 +1013,16 @@ export default function Home() {
           {/* Tab nav */}
           <nav style={{ display: "flex", gap: 2, flex: 1 }}>
             {([
-              { key: "cac",  label: "CAC Dashboard" },
-              { key: "ads",  label: "Ad Management" },
-              { key: "eddm", label: "📮 EDDM CAC" },
+              { key: "cac",   label: "CAC Dashboard" },
+              { key: "ads",   label: "Ad Management" },
+              { key: "eddm",  label: "📮 EDDM CAC" },
+              { key: "drive", label: "Ad Status" },
+              { key: "game",  label: "⚔️ Game" },
             ] as { key: Tab; label: string }[]).map(t => (
-              <button key={t.key} onClick={() => setTab(t.key)}
+              <button key={t.key} onClick={() => {
+                if (t.key === "game") { window.location.href = "/game"; return; }
+                setTab(t.key);
+              }}
                 style={{
                   padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 500,
                   border: "none", cursor: "pointer", transition: "all 0.15s",
@@ -2242,6 +2306,251 @@ export default function Home() {
                     </div>
                   </div>
                 </>
+              )}
+            </>
+          );
+        })()}
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* AD STATUS TAB                                                        */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {tab === "drive" && (() => {
+          function fileTypeLabel(mimeType: string): string {
+            if (mimeType.startsWith("video/"))                               return "Video";
+            if (mimeType.startsWith("image/"))                               return "Image";
+            if (mimeType === "application/pdf")                              return "PDF";
+            if (mimeType.includes("photoshop") || mimeType.includes("psd")) return "PSD";
+            if (mimeType.includes("illustrator"))                            return "AI";
+            if (mimeType.includes("google-apps.folder"))                     return "Folder";
+            if (mimeType.includes("google-apps"))                            return "Google";
+            return "File";
+          }
+          function fileTypeColor(mimeType: string): string {
+            if (mimeType.startsWith("video/")) return C.blue;
+            if (mimeType.startsWith("image/")) return C.purple;
+            if (mimeType === "application/pdf") return C.red;
+            return C.textSec;
+          }
+
+          const folderId = extractDriveFolderId(driveFolderUrl);
+
+          function loadDriveData(id: string) {
+            setDriveMatches(null);
+            setDriveSummary(null);
+            setDriveError(null);
+            setDriveLoading(true);
+            fetch(`/api/drive-ads?folderId=${encodeURIComponent(id)}`)
+              .then(r => r.json())
+              .then(data => {
+                if (data.error) { setDriveError(data.error); return; }
+                setDriveMatches(data.matches ?? []);
+                setDriveSummary(data.summary ?? null);
+              })
+              .catch(() => setDriveError("Failed to fetch Drive data"))
+              .finally(() => setDriveLoading(false));
+          }
+
+          const filtered = (driveMatches ?? []).filter(m => {
+            if (driveFilter === "launched")     return m.launched;
+            if (driveFilter === "not_launched") return !m.launched;
+            return true;
+          });
+
+          return (
+            <>
+              {/* ── Header ──────────────────────────────────────────────── */}
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Ad Launch Status</h1>
+                  <p style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>See which Drive ad files have been launched on Facebook.</p>
+                </div>
+                {folderId && driveMatches && !driveLoading && (
+                  <button
+                    onClick={() => loadDriveData(folderId)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: C.card, border: `1px solid ${C.border}`, color: C.text, cursor: "pointer" }}>
+                    <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                    Refresh
+                  </button>
+                )}
+              </div>
+
+              {/* ── Folder URL input ────────────────────────────────────── */}
+              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "20px", boxShadow: C.shadow }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>Google Drive Folder</div>
+                <p style={{ fontSize: 12, color: C.textSec, marginBottom: 12, lineHeight: 1.6 }}>
+                  Paste the URL of your Google Drive folder that contains your ad files (videos/images).
+                  The folder must be shared as <strong>"Anyone with the link can view"</strong>.
+                  Ad names are matched by file name — the same name you use when naming ads on Facebook.
+                </p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    type="text"
+                    value={driveFolderInput}
+                    onChange={e => setDriveFolderInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key !== "Enter") return;
+                      const id = extractDriveFolderId(driveFolderInput.trim());
+                      if (!id) { setDriveError("Could not extract a folder ID. Make sure it’s a Google Drive folder link."); return; }
+                      localStorage.setItem("driveFolderUrl", driveFolderInput.trim());
+                      setDriveFolderUrl(driveFolderInput.trim());
+                      loadDriveData(id);
+                    }}
+                    placeholder="https://drive.google.com/drive/folders/…"
+                    style={{
+                      flex: 1, padding: "9px 12px", borderRadius: 8, fontSize: 13,
+                      border: `1px solid ${C.border}`, background: C.bg, color: C.text, outline: "none",
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const id = extractDriveFolderId(driveFolderInput.trim());
+                      if (!id) { setDriveError("Could not extract a folder ID. Make sure it’s a Google Drive folder link."); return; }
+                      localStorage.setItem("driveFolderUrl", driveFolderInput.trim());
+                      setDriveFolderUrl(driveFolderInput.trim());
+                      loadDriveData(id);
+                    }}
+                    style={{
+                      padding: "9px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                      background: "linear-gradient(135deg,#16a34a,#15803d)", color: "#fff",
+                      border: "none", cursor: "pointer", whiteSpace: "nowrap",
+                    }}>
+                    Load Ads
+                  </button>
+                </div>
+                {folderId && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: C.textMuted }}>
+                    Folder ID: <code style={{ background: C.bg, padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.border}` }}>{folderId}</code>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Loading ─────────────────────────────────────────────── */}
+              {driveLoading && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "40px 0", justifyContent: "center" }}>
+                  <Spinner size={20} />
+                  <span style={{ fontSize: 14, color: C.textSec }}>Fetching Google Drive files…</span>
+                </div>
+              )}
+
+              {/* ── Error ───────────────────────────────────────────────── */}
+              {driveError && !driveLoading && (
+                <div style={{ background: C.amberSoft, border: `1px solid ${C.amber}30`, borderRadius: 12, padding: "16px 20px" }}>
+                  <div style={{ fontWeight: 700, color: C.amber, fontSize: 13, marginBottom: 4 }}>Error</div>
+                  <div style={{ fontSize: 12, color: C.textSec }}>{driveError}</div>
+                  {(driveError.includes("GOOGLE_SERVICE_ACCOUNT") || driveError.includes("not set")) && (
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8 }}>
+                      Add <code style={{ background: C.amberSoft, padding: "1px 5px", borderRadius: 4 }}>GOOGLE_SERVICE_ACCOUNT_EMAIL</code> and{" "}
+                      <code style={{ background: C.amberSoft, padding: "1px 5px", borderRadius: 4 }}>GOOGLE_PRIVATE_KEY</code> to your Vercel environment variables, and share the Drive folder with the service account email.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Summary stats ───────────────────────────────────────── */}
+              {driveSummary && !driveLoading && (
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  {[
+                    { label: "Total Drive Ads", value: driveSummary.total,       color: C.text  },
+                    { label: "Launched on FB",  value: driveSummary.launched,    color: C.green },
+                    { label: "Not Launched",    value: driveSummary.notLaunched, color: C.amber },
+                    { label: "Launch Rate",     value: driveSummary.total > 0 ? `${Math.round(driveSummary.launched / driveSummary.total * 100)}%` : "—", color: C.blue },
+                  ].map(stat => (
+                    <div key={stat.label} style={{ flex: "1 1 140px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 20px", boxShadow: C.shadow }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: stat.color, letterSpacing: "-0.02em" }}>{stat.value}</div>
+                      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, fontWeight: 500 }}>{stat.label}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Filter pills ────────────────────────────────────────── */}
+              {driveMatches && !driveLoading && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  {([
+                    { key: "all",          label: "All" },
+                    { key: "launched",     label: "Launched" },
+                    { key: "not_launched", label: "Not Launched" },
+                  ] as { key: typeof driveFilter; label: string }[]).map(f => (
+                    <button key={f.key} onClick={() => setDriveFilter(f.key)} style={{
+                      padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
+                      background: driveFilter === f.key ? C.text : C.card,
+                      color:      driveFilter === f.key ? "#fff"  : C.textSec,
+                      boxShadow:  driveFilter === f.key ? "none"  : C.shadow,
+                    }}>
+                      {f.label}
+                      {f.key !== "all" && driveSummary && (
+                        <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>
+                          {f.key === "launched" ? driveSummary.launched : driveSummary.notLaunched}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Results table ───────────────────────────────────────── */}
+              {driveMatches && !driveLoading && !driveError && (
+                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow }}>
+                  <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <th style={{ ...thStyle, width: "42%" }}>Drive File Name</th>
+                        <th style={{ ...thStyle, width: "9%"  }}>Type</th>
+                        <th style={{ ...thStyle, width: "15%" }}>FB Status</th>
+                        <th style={{ ...thStyle, width: "29%" }}>Matched Facebook Ad</th>
+                        <th style={{ ...thStyle, width: "5%", textAlign: "right" }}>Match</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.length === 0 && (
+                        <tr>
+                          <td colSpan={5} style={{ padding: "32px 20px", textAlign: "center", color: C.textMuted, fontSize: 13 }}>
+                            {driveMatches.length === 0 ? "No files found in this folder." : "No files match this filter."}
+                          </td>
+                        </tr>
+                      )}
+                      {filtered.map(m => (
+                        <tr key={m.file.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                          <td style={{ padding: "12px 20px", fontWeight: 500, color: C.text, wordBreak: "break-word", lineHeight: 1.4 }}>
+                            {m.file.name}
+                          </td>
+                          <td style={{ padding: "12px 20px" }}>
+                            <span style={{
+                              fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase",
+                              padding: "2px 8px", borderRadius: 20,
+                              background: `${fileTypeColor(m.file.mimeType)}18`,
+                              color: fileTypeColor(m.file.mimeType),
+                            }}>
+                              {fileTypeLabel(m.file.mimeType)}
+                            </span>
+                          </td>
+                          <td style={{ padding: "12px 20px" }}>
+                            <span style={{
+                              display: "inline-flex", alignItems: "center", gap: 5,
+                              fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 20,
+                              background: m.launched ? "#dcfce7" : "#fef3c7",
+                              color:      m.launched ? "#15803d" : "#92400e",
+                            }}>
+                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: m.launched ? "#16a34a" : "#d97706", flexShrink: 0 }} />
+                              {m.launched ? "Launched" : "Not Launched"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "12px 20px", color: m.fbAdName ? C.text : C.textMuted, fontSize: 12, wordBreak: "break-word", lineHeight: 1.4 }}>
+                            {m.fbAdName ?? "—"}
+                          </td>
+                          <td style={{ padding: "12px 20px", textAlign: "right", color: C.textMuted, fontSize: 11 }}>
+                            {m.launched ? `${m.matchScore}%` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {filtered.length > 0 && (
+                    <div style={{ padding: "10px 20px", background: C.bg, borderTop: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+                      Showing {filtered.length} of {driveMatches.length} files
+                    </div>
+                  )}
+                </div>
               )}
             </>
           );
