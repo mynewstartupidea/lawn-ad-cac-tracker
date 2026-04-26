@@ -94,6 +94,8 @@ interface AdReportItem {
   ctr: number;
   reach: number;
   cpm: number;
+  results: number;
+  costPerResult: number;
   thumbnailUrl?: string;
   accountId: string;
 }
@@ -102,6 +104,8 @@ interface AdReportSummary {
   active: number;
   inactive: number;
   totalSpend: number;
+  totalResults: number;
+  costPerResult: number;
   avgCtr: number;
 }
 type AdTab      = "chat" | "metrics" | "assets";
@@ -615,7 +619,7 @@ export default function Home() {
   const [fbReportDatePreset, setFbReportDatePreset] = useState("last_7d");
   const [fbReportSummary,    setFbReportSummary]    = useState<AdReportSummary | null>(null);
   const [fbReportPage,       setFbReportPage]       = useState(1);
-  const [fbReportSortCol,    setFbReportSortCol]    = useState<"adName" | "spend" | "reach" | "cpm" | "ctr" | "impressions" | "clicks">("spend");
+  const [fbReportSortCol,    setFbReportSortCol]    = useState<"adName" | "spend" | "reach" | "cpm" | "ctr" | "impressions" | "clicks" | "results" | "costPerResult">("spend");
   const [fbReportSortDir,    setFbReportSortDir]    = useState<"asc" | "desc">("desc");
 
   // Load saved Drive folder URL from localStorage
@@ -2617,6 +2621,7 @@ export default function Home() {
         {tab === "report" && (() => {
           const PAGE_SIZE = 25;
           const REPORT_DATE_OPTIONS: { label: string; value: string }[] = [
+            { label: "Today",        value: "today"         },
             { label: "Last 7 Days",  value: "last_7d"       },
             { label: "Last 14 Days", value: "last_14d"      },
             { label: "Last 30 Days", value: "last_30_days"  },
@@ -2646,8 +2651,10 @@ export default function Home() {
               else if (fbReportSortCol === "reach")       diff = a.reach       - b.reach;
               else if (fbReportSortCol === "cpm")         diff = a.cpm         - b.cpm;
               else if (fbReportSortCol === "ctr")         diff = a.ctr         - b.ctr;
-              else if (fbReportSortCol === "impressions") diff = a.impressions - b.impressions;
-              else if (fbReportSortCol === "clicks")      diff = a.clicks      - b.clicks;
+              else if (fbReportSortCol === "impressions")   diff = a.impressions    - b.impressions;
+              else if (fbReportSortCol === "clicks")        diff = a.clicks         - b.clicks;
+              else if (fbReportSortCol === "results")       diff = a.results        - b.results;
+              else if (fbReportSortCol === "costPerResult") diff = a.costPerResult  - b.costPerResult;
               return fbReportSortDir === "asc" ? diff : -diff;
             });
           })();
@@ -2664,10 +2671,12 @@ export default function Home() {
 
           function downloadCsv() {
             if (!fbReport || fbReport.length === 0) return;
-            const header = "Ad Name,Status,Spend ($),Reach,CPM ($),CTR (%),Impressions,Clicks,Account";
+            const header = "Ad Name,Status,Results,Cost Per Result ($),Spend ($),Reach,CPM ($),CTR (%),Impressions,Clicks,Account";
             const rows = sortedFiltered.map(a => [
               `"${a.adName.replace(/"/g, '""')}"`,
               a.effectiveStatus,
+              a.results,
+              a.costPerResult > 0 ? a.costPerResult.toFixed(2) : "",
               a.spend.toFixed(2),
               a.reach,
               a.cpm.toFixed(2),
@@ -2817,11 +2826,11 @@ export default function Home() {
               {fbReportSummary && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
                   {[
-                    { label: "Total Ads",   value: fbReportSummary.total.toString(),         color: C.blue,   soft: C.blueSoft,   icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.blue} strokeWidth={2}><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg> },
-                    { label: "Active",      value: fbReportSummary.active.toString(),         color: C.green,  soft: C.greenSoft,  icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.green} strokeWidth={2}><circle cx="12" cy="12" r="9"/><path strokeLinecap="round" d="M8 12l2.5 2.5L16 9"/></svg> },
-                    { label: "Paused",      value: fbReportSummary.inactive.toString(),       color: C.textSec, soft: "#f1f5f9",  icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.textSec} strokeWidth={2}><circle cx="12" cy="12" r="9"/><path strokeLinecap="round" d="M10 9v6M14 9v6"/></svg> },
-                    { label: "Total Spend", value: fmtMoney(fbReportSummary.totalSpend),      color: C.orange, soft: C.orangeSoft, icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.orange} strokeWidth={2}><path strokeLinecap="round" d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg> },
-                    { label: "Avg CTR",     value: `${fbReportSummary.avgCtr.toFixed(2)}%`,  color: C.purple, soft: C.purpleSoft, icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.purple} strokeWidth={2}><path strokeLinecap="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"/></svg> },
+                    { label: "Total Ads",      value: fbReportSummary.total.toString(),                                                        color: C.blue,   soft: C.blueSoft,   icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.blue}   strokeWidth={2}><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg> },
+                    { label: "Active",         value: fbReportSummary.active.toString(),                                                                 color: C.green,  soft: C.greenSoft,  icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.green}  strokeWidth={2}><circle cx="12" cy="12" r="9"/><path strokeLinecap="round" d="M8 12l2.5 2.5L16 9"/></svg> },
+                    { label: "Total Spend",    value: fmtMoney(fbReportSummary.totalSpend),                                                             color: C.orange, soft: C.orangeSoft, icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.orange} strokeWidth={2}><path strokeLinecap="round" d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg> },
+                    { label: "Results",        value: fbReportSummary.totalResults.toString(),                                                          color: C.purple, soft: C.purpleSoft, icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.purple} strokeWidth={2}><path strokeLinecap="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> },
+                    { label: "Cost / Result",  value: fbReportSummary.costPerResult > 0 ? `$${fbReportSummary.costPerResult.toFixed(2)}` : "—",         color: C.cyan,   soft: C.cyanSoft,   icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.cyan}   strokeWidth={2}><path strokeLinecap="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg> },
                   ].map(({ label, value, color, soft, icon }) => (
                     <div key={label} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px", boxShadow: C.shadow, display: "flex", alignItems: "center", gap: 12 }}>
                       <div style={{ width: 36, height: 36, borderRadius: 9, background: soft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -2882,6 +2891,12 @@ export default function Home() {
                             Ad Name {fbReportSortCol === "adName" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
                           </th>
                           <th style={{ ...thStyle, width: 110 }}>Status</th>
+                          <th style={{ ...thStyle, width: 85, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("results")}>
+                            Results {fbReportSortCol === "results" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
+                          </th>
+                          <th style={{ ...thStyle, width: 105, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("costPerResult")}>
+                            Cost/Result {fbReportSortCol === "costPerResult" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
+                          </th>
                           <th style={{ ...thStyle, width: 100, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("spend")}>
                             Spent {fbReportSortCol === "spend" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
                           </th>
@@ -2950,6 +2965,12 @@ export default function Home() {
                                     background: isActive ? C.green : isPaused ? "#94a3b8" : C.red }} />
                                   {isActive ? "Active" : isPaused ? "Paused" : ad.effectiveStatus.replace(/_/g, " ")}
                                 </span>
+                              </td>
+                              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: ad.results > 0 ? C.purple : C.textMuted }}>
+                                {ad.results > 0 ? ad.results : "—"}
+                              </td>
+                              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: ad.costPerResult > 0 ? C.cyan : C.textMuted }}>
+                                {ad.costPerResult > 0 ? `$${ad.costPerResult.toFixed(2)}` : "—"}
                               </td>
                               <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: ad.spend > 0 ? C.green : C.textMuted }}>
                                 ${ad.spend.toFixed(2)}

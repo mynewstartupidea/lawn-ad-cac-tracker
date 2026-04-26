@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+interface FbAction {
+  action_type: string;
+  value: string;
+}
+
 interface FbInsightItem {
   ad_id: string;
   ad_name: string;
@@ -8,6 +13,7 @@ interface FbInsightItem {
   clicks: string;
   ctr: string;
   reach: string;
+  actions?: FbAction[];
 }
 
 interface FbAd {
@@ -29,8 +35,25 @@ export interface AdReportItem {
   ctr: number;
   reach: number;
   cpm: number;
+  results: number;
+  costPerResult: number;
   thumbnailUrl?: string;
   accountId: string;
+}
+
+// Action types Facebook counts as "results" for lead-gen campaigns
+const RESULT_ACTION_TYPES = [
+  "lead",
+  "onsite_conversion.lead_grouped",
+  "offsite_conversion.fb_pixel_lead",
+  "contact",
+];
+
+function sumActions(actions: FbAction[] | undefined): number {
+  if (!actions) return 0;
+  return actions
+    .filter(a => RESULT_ACTION_TYPES.includes(a.action_type))
+    .reduce((s, a) => s + parseFloat(a.value || "0"), 0);
 }
 
 async function paginatedFetch<T>(startUrl: string): Promise<T[]> {
@@ -47,21 +70,17 @@ async function paginatedFetch<T>(startUrl: string): Promise<T[]> {
   return all;
 }
 
-// Fetch creative thumbnails separately — best-effort, never blocks main data
+// Fetch creative thumbnails best-effort — never blocks main data
 async function fetchCreatives(
-  accountId: string,
   token: string,
   adIds: string[]
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (adIds.length === 0) return map;
-
   try {
-    // Batch up to 50 ad IDs per call using the batch endpoint
     const batchSize = 50;
     for (let i = 0; i < adIds.length; i += batchSize) {
       const chunk = adIds.slice(i, i + batchSize);
-      // Filter-by-id using ?ids=... which avoids creative expansion permission issues
       const params = new URLSearchParams({
         ids:          chunk.join(","),
         fields:       "id,creative{thumbnail_url}",
@@ -69,14 +88,12 @@ async function fetchCreatives(
       });
       const res  = await fetch(`https://graph.facebook.com/v21.0/?${params}`);
       const data = await res.json();
-      if (data.error) break; // silently stop if creative permissions missing
+      if (data.error) break;
       for (const [id, ad] of Object.entries(data as Record<string, FbAd>)) {
         if (ad.creative?.thumbnail_url) map.set(id, ad.creative.thumbnail_url);
       }
     }
-  } catch {
-    // creative fetch is optional — swallow all errors
-  }
+  } catch { /* swallow */ }
   return map;
 }
 
@@ -100,13 +117,11 @@ export async function GET(req: Request) {
   try {
     const allAds = (await Promise.all(
       accountIds.map(async (accountId) => {
-        // 1. Fetch ad-level insights (spend, impressions, clicks, ctr, reach)
         const insightsUrl =
           `https://graph.facebook.com/v21.0/act_${accountId}/insights` +
-          `?fields=ad_id,ad_name,spend,impressions,clicks,ctr,reach` +
+          `?fields=ad_id,ad_name,spend,impressions,clicks,ctr,reach,actions` +
           `&level=ad&date_preset=${datePreset}&limit=500&access_token=${token}`;
 
-        // 2. Fetch ad status (active/paused) — no creative expansion here
         const adsUrl =
           `https://graph.facebook.com/v21.0/act_${accountId}/ads` +
           `?fields=id,name,status,effective_status` +
@@ -117,17 +132,17 @@ export async function GET(req: Request) {
           paginatedFetch<FbAd>(adsUrl),
         ]);
 
-        const adMap       = new Map(ads.map(a => [a.id, a]));
+        const adMap        = new Map(ads.map(a => [a.id, a]));
         const insightAdIds = insights.map(i => i.ad_id);
-
-        // 3. Fetch thumbnails best-effort (won't throw if it fails)
-        const thumbMap = await fetchCreatives(accountId, token, insightAdIds);
+        const thumbMap     = await fetchCreatives(token, insightAdIds);
 
         return insights.map((item): AdReportItem => {
           const ad          = adMap.get(item.ad_id);
           const spend       = parseFloat(item.spend       || "0");
           const impressions = parseInt(item.impressions   || "0");
           const cpm         = impressions > 0 ? (spend / impressions) * 1000 : 0;
+          const results     = sumActions(item.actions);
+          const costPerResult = results > 0 ? spend / results : 0;
 
           return {
             adId:            item.ad_id,
@@ -140,6 +155,8 @@ export async function GET(req: Request) {
             ctr:             parseFloat(item.ctr  || "0"),
             reach:           parseInt(item.reach  || "0"),
             cpm:             Math.round(cpm * 100) / 100,
+            results:         Math.round(results),
+            costPerResult:   Math.round(costPerResult * 100) / 100,
             thumbnailUrl:    thumbMap.get(item.ad_id),
             accountId,
           };
@@ -147,16 +164,20 @@ export async function GET(req: Request) {
       })
     )).flat().sort((a, b) => b.spend - a.spend);
 
-    const activeCount = allAds.filter(a => a.effectiveStatus === "ACTIVE").length;
+    const activeCount   = allAds.filter(a => a.effectiveStatus === "ACTIVE").length;
+    const totalResults  = allAds.reduce((s, a) => s + a.results, 0);
+    const totalSpend    = allAds.reduce((s, a) => s + a.spend, 0);
 
     return NextResponse.json({
       ads: allAds,
       summary: {
-        total:      allAds.length,
-        active:     activeCount,
-        inactive:   allAds.length - activeCount,
-        totalSpend: Math.round(allAds.reduce((s, a) => s + a.spend, 0) * 100) / 100,
-        avgCtr:     allAds.length > 0
+        total:          allAds.length,
+        active:         activeCount,
+        inactive:       allAds.length - activeCount,
+        totalSpend:     Math.round(totalSpend * 100) / 100,
+        totalResults,
+        costPerResult:  totalResults > 0 ? Math.round((totalSpend / totalResults) * 100) / 100 : 0,
+        avgCtr:         allAds.length > 0
           ? Math.round((allAds.reduce((s, a) => s + a.ctr, 0) / allAds.length) * 100) / 100
           : 0,
       },
