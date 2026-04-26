@@ -68,7 +68,7 @@ type DateRange  = "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
 type Account    = "all" | "florida" | "georgia";
-type Tab        = "cac" | "ads" | "eddm" | "drive" | "game";
+type Tab        = "cac" | "ads" | "eddm" | "drive" | "report" | "game";
 
 interface DriveFile {
   id: string;
@@ -81,6 +81,28 @@ interface DriveAdMatch {
   launched: boolean;
   fbAdName?: string;
   matchScore: number;
+}
+
+interface AdReportItem {
+  adId: string;
+  adName: string;
+  status: string;
+  effectiveStatus: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  reach: number;
+  cpm: number;
+  thumbnailUrl?: string;
+  accountId: string;
+}
+interface AdReportSummary {
+  total: number;
+  active: number;
+  inactive: number;
+  totalSpend: number;
+  avgCtr: number;
 }
 type AdTab      = "chat" | "metrics" | "assets";
 
@@ -583,6 +605,16 @@ export default function Home() {
   const [driveFolderUrl, setDriveFolderUrl] = useState<string>("");
   const [driveFolderInput, setDriveFolderInput] = useState<string>("");
 
+  // Ad Performance Report state
+  const [fbReport,           setFbReport]           = useState<AdReportItem[] | null>(null);
+  const [fbReportLoading,    setFbReportLoading]    = useState(false);
+  const [fbReportError,      setFbReportError]      = useState<string | null>(null);
+  const [fbReportAccount,    setFbReportAccount]    = useState<Account>("all");
+  const [fbReportFilter,     setFbReportFilter]     = useState<"all" | "active" | "paused">("all");
+  const [fbReportSearch,     setFbReportSearch]     = useState("");
+  const [fbReportDatePreset, setFbReportDatePreset] = useState("last_7d");
+  const [fbReportSummary,    setFbReportSummary]    = useState<AdReportSummary | null>(null);
+
   // Load saved Drive folder URL from localStorage
   useEffect(() => {
     const saved = localStorage.getItem("driveFolderUrl") ?? "";
@@ -778,6 +810,27 @@ export default function Home() {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortCol(col); setSortDir("desc"); }
   };
+
+  // ── Ad Performance Report fetch ───────────────────────────────────────────
+
+  const fetchFbReport = useCallback(async (acct: Account, datePreset: string) => {
+    setFbReportLoading(true);
+    setFbReportError(null);
+    setFbReport(null);
+    setFbReportSummary(null);
+    try {
+      const accountParam = ACCOUNT_IDS[acct];
+      const res  = await fetch(`/api/facebook-report?account=${accountParam}&date_preset=${datePreset}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setFbReport(data.ads ?? []);
+      setFbReportSummary(data.summary ?? null);
+    } catch (err) {
+      setFbReportError(err instanceof Error ? err.message : "Failed to fetch report");
+    } finally {
+      setFbReportLoading(false);
+    }
+  }, []);
 
   // ── Chat handler (real OpenAI) ────────────────────────────────────────────
 
@@ -1016,8 +1069,9 @@ export default function Home() {
               { key: "cac",   label: "CAC Dashboard" },
               { key: "ads",   label: "Ad Management" },
               { key: "eddm",  label: "📮 EDDM CAC" },
-              { key: "drive", label: "Ad Status" },
-              { key: "game",  label: "⚔️ Game" },
+              { key: "drive",  label: "Ad Status" },
+              { key: "report", label: "📊 Ad Report" },
+              { key: "game",   label: "⚔️ Game" },
             ] as { key: Tab; label: string }[]).map(t => (
               <button key={t.key} onClick={() => {
                 if (t.key === "game") { window.location.href = "/game"; return; }
@@ -2550,6 +2604,361 @@ export default function Home() {
                       Showing {filtered.length} of {driveMatches.length} files
                     </div>
                   )}
+                </div>
+              )}
+            </>
+          );
+        })()}
+
+        {/* ── Ad Performance Report tab ─────────────────────────────────── */}
+        {tab === "report" && (() => {
+          const REPORT_DATE_OPTIONS: { label: string; value: string }[] = [
+            { label: "Last 7 Days",  value: "last_7d"       },
+            { label: "Last 14 Days", value: "last_14d"      },
+            { label: "Last 30 Days", value: "last_30_days"  },
+          ];
+
+          const ACCOUNT_LABELS_LOCAL: Record<Account, string> = {
+            all:     "Both Accounts",
+            florida: "Florida",
+            georgia: "Georgia",
+          };
+          const ACCOUNT_ID_TO_LABEL: Record<string, string> = {
+            "435459903489885":  "Florida",
+            "1467364857363196": "Georgia",
+          };
+
+          const filteredReport = (fbReport ?? []).filter(ad => {
+            if (fbReportFilter === "active" && ad.effectiveStatus !== "ACTIVE") return false;
+            if (fbReportFilter === "paused" && ad.effectiveStatus === "ACTIVE") return false;
+            if (fbReportSearch && !ad.adName.toLowerCase().includes(fbReportSearch.toLowerCase())) return false;
+            return true;
+          });
+
+          function downloadCsv() {
+            if (!fbReport || fbReport.length === 0) return;
+            const header = "Ad Name,Status,Spend ($),Reach,CPM ($),CTR (%),Impressions,Clicks,Account";
+            const rows = fbReport.map(a => [
+              `"${a.adName.replace(/"/g, '""')}"`,
+              a.effectiveStatus,
+              a.spend.toFixed(2),
+              a.reach,
+              a.cpm.toFixed(2),
+              a.ctr.toFixed(2),
+              a.impressions,
+              a.clicks,
+              ACCOUNT_ID_TO_LABEL[a.accountId] ?? a.accountId,
+            ].join(","));
+            const csv  = [header, ...rows].join("\n");
+            const blob = new Blob([csv], { type: "text/csv" });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement("a");
+            a.href = url;
+            a.download = `ad-report-${new Date().toISOString().split("T")[0]}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }
+
+          function downloadImage(thumbnailUrl: string, adName: string) {
+            const proxyUrl = `/api/fb-image?url=${encodeURIComponent(thumbnailUrl)}`;
+            const a = document.createElement("a");
+            a.href = proxyUrl;
+            a.download = `${adName.slice(0, 60).replace(/[^a-z0-9]/gi, "-")}.jpg`;
+            a.click();
+          }
+
+          const statusBadge = (effectiveStatus: string) => {
+            const isActive   = effectiveStatus === "ACTIVE";
+            const isPaused   = ["PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"].includes(effectiveStatus);
+            const bg    = isActive ? "#dcfce7" : isPaused ? "#f1f5f9" : "#fef2f2";
+            const color = isActive ? "#15803d" : isPaused ? "#475569" : "#dc2626";
+            const dot   = isActive ? "#16a34a" : isPaused ? "#94a3b8" : "#dc2626";
+            const label = isActive ? "Active" : isPaused ? "Paused" : effectiveStatus.replace(/_/g, " ");
+            return (
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 5,
+                background: bg, color, borderRadius: 20,
+                padding: "3px 10px", fontSize: 11, fontWeight: 600,
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, flexShrink: 0 }} />
+                {label}
+              </span>
+            );
+          };
+
+          return (
+            <>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Ad Performance Report</h1>
+                  <p style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>Live data from Facebook — active & inactive ads with spend, CTR and creative preview.</p>
+                </div>
+                {fbReport && fbReport.length > 0 && (
+                  <button
+                    onClick={downloadCsv}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: C.card, border: `1px solid ${C.border}`, color: C.text, cursor: "pointer", boxShadow: C.shadow }}>
+                    <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                    Download CSV
+                  </button>
+                )}
+              </div>
+
+              {/* Controls card */}
+              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", boxShadow: C.shadow }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 20, alignItems: "flex-end" }}>
+                  {/* Account selector */}
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 8 }}>Ad Account</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {(["all", "florida", "georgia"] as Account[]).map(acct => (
+                        <button
+                          key={acct}
+                          onClick={() => setFbReportAccount(acct)}
+                          style={{
+                            padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                            border: `1px solid ${fbReportAccount === acct ? C.blue : C.border}`,
+                            background: fbReportAccount === acct ? C.blueSoft : C.card,
+                            color: fbReportAccount === acct ? C.blueText : C.textSec,
+                            cursor: "pointer", transition: "all 0.15s",
+                          }}>
+                          {ACCOUNT_LABELS_LOCAL[acct]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Date range */}
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 8 }}>Period</div>
+                    <select
+                      value={fbReportDatePreset}
+                      onChange={e => setFbReportDatePreset(e.target.value)}
+                      style={{ ...selectStyle, padding: "7px 14px" }}>
+                      {REPORT_DATE_OPTIONS.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Fetch button */}
+                  <button
+                    disabled={fbReportLoading}
+                    onClick={() => fetchFbReport(fbReportAccount, fbReportDatePreset)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "9px 22px", borderRadius: 9, fontSize: 13, fontWeight: 700,
+                      background: fbReportLoading ? C.blueSoft : C.blue,
+                      color: fbReportLoading ? C.blueText : "#fff",
+                      border: "none", cursor: fbReportLoading ? "not-allowed" : "pointer",
+                      boxShadow: fbReportLoading ? "none" : "0 2px 8px rgba(37,99,235,0.25)",
+                      transition: "all 0.15s",
+                    }}>
+                    {fbReportLoading
+                      ? <><Spinner size={14} color={C.blue} /> Fetching…</>
+                      : <><svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg> Fetch Report</>}
+                  </button>
+                </div>
+              </div>
+
+              {/* Error */}
+              {fbReportError && (
+                <div style={{ background: C.redSoft, border: `1px solid ${C.red}30`, borderRadius: 10, padding: "12px 16px", color: C.red, fontSize: 13 }}>
+                  {fbReportError}
+                </div>
+              )}
+
+              {/* Summary cards */}
+              {fbReportSummary && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+                  {[
+                    { label: "Total Ads",   value: fbReportSummary.total.toString(),         color: C.blue,   soft: C.blueSoft,   icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.blue} strokeWidth={2}><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg> },
+                    { label: "Active",      value: fbReportSummary.active.toString(),         color: C.green,  soft: C.greenSoft,  icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.green} strokeWidth={2}><circle cx="12" cy="12" r="9"/><path strokeLinecap="round" d="M8 12l2.5 2.5L16 9"/></svg> },
+                    { label: "Paused",      value: fbReportSummary.inactive.toString(),       color: C.textSec, soft: "#f1f5f9",  icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.textSec} strokeWidth={2}><circle cx="12" cy="12" r="9"/><path strokeLinecap="round" d="M10 9v6M14 9v6"/></svg> },
+                    { label: "Total Spend", value: fmtMoney(fbReportSummary.totalSpend),      color: C.orange, soft: C.orangeSoft, icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.orange} strokeWidth={2}><path strokeLinecap="round" d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg> },
+                    { label: "Avg CTR",     value: `${fbReportSummary.avgCtr.toFixed(2)}%`,  color: C.purple, soft: C.purpleSoft, icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.purple} strokeWidth={2}><path strokeLinecap="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"/></svg> },
+                  ].map(({ label, value, color, soft, icon }) => (
+                    <div key={label} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px", boxShadow: C.shadow, display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 9, background: soft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {icon}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted }}>{label}</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: C.text, lineHeight: 1.2 }}>{value}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Filter + search bar */}
+              {fbReport && fbReport.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {(["all", "active", "paused"] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setFbReportFilter(f)}
+                        style={{
+                          padding: "5px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600,
+                          border: `1px solid ${fbReportFilter === f ? C.blue : C.border}`,
+                          background: fbReportFilter === f ? C.blueSoft : C.card,
+                          color: fbReportFilter === f ? C.blueText : C.textSec,
+                          cursor: "pointer", transition: "all 0.12s",
+                        }}>
+                        {f === "all" ? `All (${fbReport.length})` : f === "active" ? `Active (${fbReportSummary?.active ?? 0})` : `Paused (${fbReportSummary?.inactive ?? 0})`}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Search ad name…"
+                    value={fbReportSearch}
+                    onChange={e => setFbReportSearch(e.target.value)}
+                    style={{ ...selectStyle, flex: 1, minWidth: 180, padding: "6px 12px" }}
+                  />
+                  <span style={{ fontSize: 12, color: C.textMuted }}>{filteredReport.length} ad{filteredReport.length !== 1 ? "s" : ""}</span>
+                </div>
+              )}
+
+              {/* Empty / loading placeholder */}
+              {!fbReport && !fbReportLoading && !fbReportError && (
+                <div style={{ textAlign: "center", padding: "60px 20px", color: C.textMuted }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>📊</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>No report yet</div>
+                  <div style={{ fontSize: 13 }}>Select an account and click <strong>Fetch Report</strong> to pull live Facebook ad data.</div>
+                </div>
+              )}
+
+              {/* Loading skeleton grid */}
+              {fbReportLoading && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                  {[...Array(9)].map((_, i) => (
+                    <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: "hidden", boxShadow: C.shadow }}>
+                      <div className="skeleton" style={{ width: "100%", aspectRatio: "16/9" }} />
+                      <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div className="skeleton" style={{ height: 13, borderRadius: 4, width: "80%" }} />
+                        <div className="skeleton" style={{ height: 13, borderRadius: 4, width: "55%" }} />
+                        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                          <div className="skeleton" style={{ height: 11, borderRadius: 4, flex: 1 }} />
+                          <div className="skeleton" style={{ height: 11, borderRadius: 4, flex: 1 }} />
+                          <div className="skeleton" style={{ height: 11, borderRadius: 4, flex: 1 }} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Ad cards grid */}
+              {filteredReport.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                  {filteredReport.map(ad => (
+                    <div key={ad.adId} style={{
+                      background: C.card,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 14,
+                      overflow: "hidden",
+                      boxShadow: C.shadow,
+                      display: "flex",
+                      flexDirection: "column",
+                      transition: "box-shadow 0.15s, border-color 0.15s",
+                    }}>
+                      {/* Thumbnail */}
+                      <div style={{ position: "relative", width: "100%", aspectRatio: "16/9", background: "#e2e8f0", overflow: "hidden" }}>
+                        {ad.thumbnailUrl ? (
+                          <img
+                            src={ad.thumbnailUrl}
+                            alt={ad.adName}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                            onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          />
+                        ) : (
+                          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: C.textMuted }}>
+                            <svg width={28} height={28} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path strokeLinecap="round" d="M21 15l-5-5L5 21"/></svg>
+                            <span style={{ fontSize: 11, fontWeight: 500 }}>No Preview</span>
+                          </div>
+                        )}
+                        {/* Status badge overlay */}
+                        <div style={{ position: "absolute", top: 8, right: 8 }}>
+                          {statusBadge(ad.effectiveStatus)}
+                        </div>
+                        {/* Account badge */}
+                        {fbReportAccount === "all" && (
+                          <div style={{ position: "absolute", bottom: 8, left: 8 }}>
+                            <span style={{ background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, backdropFilter: "blur(4px)" }}>
+                              {ACCOUNT_ID_TO_LABEL[ad.accountId] ?? "Unknown"}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Card body */}
+                      <div style={{ padding: "14px 16px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+                        {/* Ad name */}
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }} title={ad.adName}>
+                          {ad.adName}
+                        </div>
+
+                        {/* Primary metrics: Spend + CPM big row */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                          <div style={{ background: C.greenSoft, borderRadius: 9, padding: "10px 12px" }}>
+                            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.green, marginBottom: 3 }}>Spent</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: C.green, letterSpacing: "-0.02em" }}>${ad.spend.toFixed(2)}</div>
+                          </div>
+                          <div style={{ background: C.purpleSoft, borderRadius: 9, padding: "10px 12px" }}>
+                            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.purple, marginBottom: 3 }}>CPM</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: C.purple, letterSpacing: "-0.02em" }}>${ad.cpm.toFixed(2)}</div>
+                          </div>
+                        </div>
+                        {/* Secondary metrics row */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                          {[
+                            { label: "Reach",  value: fmtNum(ad.reach),       color: C.cyan   },
+                            { label: "CTR",    value: `${ad.ctr.toFixed(2)}%`, color: C.blue   },
+                            { label: "Impr.",  value: fmtNum(ad.impressions),  color: C.textSec },
+                          ].map(({ label, value, color }) => (
+                            <div key={label} style={{ background: C.bg, borderRadius: 7, padding: "6px 8px", textAlign: "center" }}>
+                              <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: C.textMuted, marginBottom: 2 }}>{label}</div>
+                              <div style={{ fontSize: 12, fontWeight: 700, color }}>{value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Card footer */}
+                      <div style={{ borderTop: `1px solid ${C.border}`, padding: "10px 16px", display: "flex", gap: 8 }}>
+                        {ad.thumbnailUrl && (
+                          <>
+                            <a
+                              href={ad.thumbnailUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ flex: 1, textAlign: "center", padding: "6px 10px", borderRadius: 7, fontSize: 11, fontWeight: 600, background: C.bg, border: `1px solid ${C.border}`, color: C.textSec, cursor: "pointer", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                              <svg width={11} height={11} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                              View
+                            </a>
+                            <button
+                              onClick={() => downloadImage(ad.thumbnailUrl!, ad.adName)}
+                              style={{ flex: 1, textAlign: "center", padding: "6px 10px", borderRadius: 7, fontSize: 11, fontWeight: 600, background: C.blueSoft, border: `1px solid ${C.blue}30`, color: C.blueText, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                              <svg width={11} height={11} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                              Download
+                            </button>
+                          </>
+                        )}
+                        {!ad.thumbnailUrl && (
+                          <span style={{ fontSize: 11, color: C.textMuted, flex: 1, textAlign: "center", padding: "6px 0" }}>No preview available</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* No results after filter */}
+              {fbReport && fbReport.length > 0 && filteredReport.length === 0 && (
+                <div style={{ textAlign: "center", padding: "40px 20px", color: C.textMuted }}>
+                  <div style={{ fontSize: 13 }}>No ads match your current filter.</div>
                 </div>
               )}
             </>
