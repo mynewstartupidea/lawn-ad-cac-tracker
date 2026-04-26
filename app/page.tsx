@@ -2680,7 +2680,8 @@ export default function Home() {
           function downloadCsv() {
             if (!fbReport || fbReport.length === 0) return;
             const header = "Ad Name,Status,Results,Cost Per Result ($),Spend ($),Reach,CPM ($),CTR (%),Impressions,Clicks,Account";
-            const rows = sortedFiltered.map(a => [
+            const allRows = [...fbReport].sort((a, b) => b.spend - a.spend);
+            const rows = allRows.map(a => [
               `"${a.adName.replace(/"/g, '""')}"`,
               a.effectiveStatus,
               a.results,
