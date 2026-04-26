@@ -621,6 +621,8 @@ export default function Home() {
   const [fbReportPage,       setFbReportPage]       = useState(1);
   const [fbReportSortCol,    setFbReportSortCol]    = useState<"adName" | "spend" | "reach" | "cpm" | "ctr" | "impressions" | "clicks" | "results" | "costPerResult">("spend");
   const [fbReportSortDir,    setFbReportSortDir]    = useState<"asc" | "desc">("desc");
+  const [fbReportSince,      setFbReportSince]      = useState("");
+  const [fbReportUntil,      setFbReportUntil]      = useState("");
 
   // Load saved Drive folder URL from localStorage
   useEffect(() => {
@@ -820,14 +822,20 @@ export default function Home() {
 
   // ── Ad Performance Report fetch ───────────────────────────────────────────
 
-  const fetchFbReport = useCallback(async (acct: Account, datePreset: string) => {
+  const fetchFbReport = useCallback(async (acct: Account, datePreset: string, since?: string, until?: string) => {
     setFbReportLoading(true);
     setFbReportError(null);
     setFbReport(null);
     setFbReportSummary(null);
     try {
-      const accountParam = ACCOUNT_IDS[acct];
-      const res  = await fetch(`/api/facebook-report?account=${accountParam}&date_preset=${datePreset}`);
+      const params = new URLSearchParams({ account: ACCOUNT_IDS[acct] });
+      if (since && until) {
+        params.set("since", since);
+        params.set("until", until);
+      } else {
+        params.set("date_preset", datePreset);
+      }
+      const res  = await fetch(`/api/facebook-report?${params}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setFbReport(data.ads ?? []);
@@ -2703,6 +2711,67 @@ export default function Home() {
             a.click();
           }
 
+          function printReport() {
+            if (!sortedFiltered.length) return;
+            const dateLabel = fbReportSince && fbReportUntil
+              ? `${fbReportSince} → ${fbReportUntil}`
+              : REPORT_DATE_OPTIONS.find(o => o.value === fbReportDatePreset)?.label ?? fbReportDatePreset;
+            const acctLabel = ACCOUNT_LABELS_LOCAL[fbReportAccount];
+            const rows = sortedFiltered.map((ad, i) => {
+              const isActive = ad.effectiveStatus === "ACTIVE";
+              return `<tr>
+                <td>${i + 1}</td>
+                ${fbReportAccount === "all" ? `<td>${ACCOUNT_ID_TO_LABEL[ad.accountId] ?? "—"}</td>` : ""}
+                <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ad.adName}</td>
+                <td><span style="color:${isActive ? "#16a34a" : "#475569"};font-weight:600">${isActive ? "● Active" : "○ Paused"}</span></td>
+                <td class="n">${ad.results > 0 ? ad.results : "—"}</td>
+                <td class="n">${ad.costPerResult > 0 ? "$" + ad.costPerResult.toFixed(2) : "—"}</td>
+                <td class="n" style="color:#16a34a;font-weight:700">$${ad.spend.toFixed(2)}</td>
+                <td class="n">${ad.reach.toLocaleString()}</td>
+                <td class="n">$${ad.cpm.toFixed(2)}</td>
+                <td class="n">${ad.ctr.toFixed(2)}%</td>
+                <td class="n">${ad.impressions.toLocaleString()}</td>
+                <td class="n">${ad.clicks.toLocaleString()}</td>
+                <td>${ad.thumbnailUrl ? `<img src="${ad.thumbnailUrl}" style="width:70px;height:40px;object-fit:cover;border-radius:4px;display:block" />` : "—"}</td>
+              </tr>`;
+            }).join("");
+
+            const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Ad Performance Report</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;color:#0f172a;padding:24px}
+  h1{font-size:20px;font-weight:700;margin-bottom:4px}
+  .sub{color:#64748b;font-size:11px;margin-bottom:18px}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  thead th{background:#f1f5f9;padding:7px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #e2e8f0;white-space:nowrap}
+  td{padding:7px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+  tr:nth-child(even){background:#fafbfc}
+  .n{text-align:right}
+  @media print{body{padding:0}@page{margin:14mm}}
+</style></head><body>
+<h1>Ad Performance Report</h1>
+<p class="sub">${acctLabel} · ${dateLabel} · ${sortedFiltered.length} ads · Generated ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
+<table>
+<thead><tr>
+  <th>#</th>${fbReportAccount === "all" ? "<th>Acct</th>" : ""}
+  <th>Ad Name</th><th>Status</th>
+  <th class="n">Results</th><th class="n">Cost/Result</th>
+  <th class="n">Spent</th><th class="n">Reach</th>
+  <th class="n">CPM</th><th class="n">CTR</th>
+  <th class="n">Impr.</th><th class="n">Clicks</th>
+  <th>Preview</th>
+</tr></thead>
+<tbody>${rows}</tbody>
+</table>
+</body></html>`;
+            const win = window.open("", "_blank");
+            if (!win) { alert("Pop-up blocked — please allow pop-ups for this site."); return; }
+            win.document.write(html);
+            win.document.close();
+            setTimeout(() => { win.focus(); win.print(); }, 600);
+          }
+
           const statusBadge = (effectiveStatus: string) => {
             const isActive   = effectiveStatus === "ACTIVE";
             const isPaused   = ["PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"].includes(effectiveStatus);
@@ -2749,8 +2818,8 @@ export default function Home() {
                       <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                       CSV
                     </button>
-                    <button onClick={() => window.print()}
-                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: C.card, border: `1px solid ${C.border}`, color: C.text, cursor: "pointer", boxShadow: C.shadow }}>
+                    <button onClick={printReport} disabled={!sortedFiltered.length}
+                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: C.card, border: `1px solid ${C.border}`, color: C.text, cursor: "pointer", boxShadow: C.shadow, opacity: sortedFiltered.length ? 1 : 0.4 }}>
                       <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
                       PDF / Print
                     </button>
@@ -2786,19 +2855,46 @@ export default function Home() {
                   <div>
                     <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 8 }}>Period</div>
                     <select
-                      value={fbReportDatePreset}
-                      onChange={e => setFbReportDatePreset(e.target.value)}
-                      style={{ ...selectStyle, padding: "7px 14px" }}>
+                      value={fbReportSince && fbReportUntil ? "" : fbReportDatePreset}
+                      onChange={e => { setFbReportDatePreset(e.target.value); setFbReportSince(""); setFbReportUntil(""); }}
+                      style={{ ...selectStyle, padding: "7px 14px", opacity: fbReportSince && fbReportUntil ? 0.4 : 1 }}>
+                      {fbReportSince && fbReportUntil && <option value="">Custom range</option>}
                       {REPORT_DATE_OPTIONS.map(o => (
                         <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
                     </select>
                   </div>
 
+                  {/* Custom date range */}
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 8 }}>Custom range</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="date"
+                        value={fbReportSince}
+                        onChange={e => setFbReportSince(e.target.value)}
+                        style={{ ...selectStyle, padding: "7px 10px", fontSize: 13 }}
+                      />
+                      <span style={{ color: C.textMuted, fontSize: 13 }}>→</span>
+                      <input
+                        type="date"
+                        value={fbReportUntil}
+                        onChange={e => setFbReportUntil(e.target.value)}
+                        style={{ ...selectStyle, padding: "7px 10px", fontSize: 13 }}
+                      />
+                      {(fbReportSince || fbReportUntil) && (
+                        <button
+                          onClick={() => { setFbReportSince(""); setFbReportUntil(""); }}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: 16, padding: "0 4px", lineHeight: 1 }}
+                          title="Clear dates">×</button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Fetch button */}
                   <button
                     disabled={fbReportLoading}
-                    onClick={() => fetchFbReport(fbReportAccount, fbReportDatePreset)}
+                    onClick={() => fetchFbReport(fbReportAccount, fbReportDatePreset, fbReportSince || undefined, fbReportUntil || undefined)}
                     style={{
                       display: "flex", alignItems: "center", gap: 8,
                       padding: "9px 22px", borderRadius: 9, fontSize: 13, fontWeight: 700,
