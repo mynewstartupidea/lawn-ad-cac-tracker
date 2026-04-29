@@ -18,33 +18,37 @@ function isReal(val: unknown): val is string {
 // Extract source tag from GHL tags array.
 // Looks for known source tags: FBFL, FBGA, Google, etc.
 // Falls back to first tag found, then "ghl".
-const SOURCE_TAG_PATTERNS = [
-  /^FB[-_]?FL$/i,   // FBFL, FB-FL, FB_FL → FB Florida
-  /^FB[-_]?GA$/i,   // FBGA, FB-GA → FB Georgia
-  /^FB[-_]?FL/i,    // any tag starting with FBFL
-  /^FB[-_]?GA/i,    // any tag starting with FBGA
-  /^google$/i,      // Google
-  /^gg$/i,          // GG shorthand
-  /^ig$/i,          // Instagram
-  /^organic$/i,     // Organic
-  /^eddm$/i,        // EDDM mailer
+const SOURCE_TAG_PATTERNS: [RegExp, string][] = [
+  [/^FB[\s_-]?FL$/i,   "FBFL"],   // fb fl, FBFL, fb-fl, fb_fl → Florida
+  [/^FB[\s_-]?GA$/i,   "FBGA"],   // fb ga, FBGA → Georgia
+  [/^FB[\s_-]?FL/i,    "FBFL"],   // anything starting with fb fl
+  [/^FB[\s_-]?GA/i,    "FBGA"],   // anything starting with fb ga
+  [/^google$/i,        "Google"],
+  [/^gg$/i,            "Google"],
+  [/^ig$/i,            "Instagram"],
+  [/^organic$/i,       "Organic"],
+  [/^eddm$/i,          "EDDM"],
 ];
 
-function extractSourceFromTags(tags: unknown): string {
-  if (!Array.isArray(tags) || tags.length === 0) return "ghl";
-  const tagStrings = tags.map(t => String(t).trim()).filter(Boolean);
+function normalizeTags(raw: unknown): string[] {
+  if (!raw) return [];
+  let str = typeof raw === "string" ? raw : JSON.stringify(raw);
+  // Strip JSON array brackets if GHL sends ["tag1","tag2"]
+  str = str.replace(/^\[|\]$/g, "").replace(/"/g, "");
+  return str.split(",").map(t => t.trim()).filter(Boolean);
+}
 
-  // Check for known source tag patterns first
-  for (const pattern of SOURCE_TAG_PATTERNS) {
-    const match = tagStrings.find(t => pattern.test(t));
-    if (match) return match.toUpperCase();
+function extractSourceFromTags(tags: unknown): string {
+  const tagStrings = normalizeTags(tags);
+  if (!tagStrings.length) return "ghl";
+
+  for (const [pattern, label] of SOURCE_TAG_PATTERNS) {
+    if (tagStrings.find(t => pattern.test(t))) return label;
   }
 
-  // Fall back to first tag that looks like a source (short, uppercase-ish)
-  const shortTag = tagStrings.find(t => t.length <= 10);
-  if (shortTag) return shortTag.toUpperCase();
-
-  return "ghl";
+  // Fall back to first short tag
+  const shortTag = tagStrings.find(t => t.length <= 12);
+  return shortTag ? shortTag.toUpperCase() : "ghl";
 }
 
 // Extract ad name from the GHL webhook payload.
@@ -100,15 +104,8 @@ export async function POST(req: Request) {
     const firstName = String(body.first_name ?? body.name ?? body.full_name ?? "Unknown").trim();
     const phone = String(body.phone ?? "").trim();
     const adName = extractAdName(body);
-    // Source priority: explicit source field > tags array > fallback
-    // body.source may be a comma-separated string of tags e.g. "fb fl, lawn-care"
-    let source = "ghl";
-    if (isReal(body.source)) {
-      const tagList = (body.source as string).split(",").map(t => t.trim()).filter(Boolean);
-      source = extractSourceFromTags(tagList);
-    } else {
-      source = extractSourceFromTags(body.tags);
-    }
+    // Source: check explicit source field first (may be tags string), then body.tags
+    const source = extractSourceFromTags(isReal(body.source) ? body.source : body.tags);
 
     // Log everything — check Vercel function logs to debug missing leads
     const attr = body.attributionSource as Record<string, unknown> | undefined;
