@@ -5,9 +5,6 @@ import { extractSoldEmail } from "../../lib/extractSoldEmail";
 import { sendSoldConversion } from "../../lib/metaCapi";
 import { AD_ACCOUNTS } from "../../lib/adAccounts";
 
-// Determine sale value + pixel based on which account the lead came from.
-// Florida ads contain "FI" or "Fl", Georgia ads contain "GA".
-// If unknown, fire to both pixels.
 function resolveAccount(adName: string | null): { pixelId: string; value: number }[] {
   const name = (adName ?? "").toUpperCase();
   if (name.includes(" GA ") || name.startsWith("GA")) {
@@ -16,7 +13,6 @@ function resolveAccount(adName: string | null): { pixelId: string; value: number
   if (name.startsWith("FL") || name.startsWith("FI") || name.includes(" FL") || name.includes(" FI")) {
     return [{ pixelId: AD_ACCOUNTS.florida.pixelId, value: 99 }];
   }
-  // Unknown — fire to both
   return [
     { pixelId: AD_ACCOUNTS.florida.pixelId, value: 99 },
     { pixelId: AD_ACCOUNTS.georgia.pixelId, value: 19 },

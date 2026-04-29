@@ -68,7 +68,7 @@ type DateRange  = "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
 type Account    = "all" | "florida" | "georgia";
-type Tab        = "cac" | "ads" | "eddm" | "drive" | "report" | "game";
+type Tab        = "cac" | "ads" | "eddm" | "drive" | "report";
 
 interface DriveFile {
   id: string;
@@ -1086,10 +1086,8 @@ export default function Home() {
               { key: "eddm",  label: "📮 EDDM CAC" },
               { key: "drive",  label: "Ad Status" },
               { key: "report", label: "📊 Ad Report" },
-              { key: "game",   label: "⚔️ Game" },
             ] as { key: Tab; label: string }[]).map(t => (
               <button key={t.key} onClick={() => {
-                if (t.key === "game") { window.location.href = "/game"; return; }
                 setTab(t.key);
               }}
                 style={{

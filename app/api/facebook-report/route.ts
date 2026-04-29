@@ -109,6 +109,13 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const accountParam = searchParams.get("account")     || "all";
   const datePreset   = searchParams.get("date_preset") || "last_7d";
+  const since        = searchParams.get("since");
+  const until        = searchParams.get("until");
+
+  // Custom date range takes priority over preset
+  const timeParam = since && until
+    ? `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}`
+    : `&date_preset=${datePreset}`;
 
   const accountIds = accountParam === "all"
     ? allIds
@@ -120,7 +127,7 @@ export async function GET(req: Request) {
         const insightsUrl =
           `https://graph.facebook.com/v21.0/act_${accountId}/insights` +
           `?fields=ad_id,ad_name,spend,impressions,clicks,ctr,reach,actions` +
-          `&level=ad&date_preset=${datePreset}&limit=500&access_token=${token}`;
+          `&level=ad${timeParam}&limit=500&access_token=${token}`;
 
         const adsUrl =
           `https://graph.facebook.com/v21.0/act_${accountId}/ads` +
