@@ -95,28 +95,53 @@ function extractAdName(body: Record<string, unknown>): string {
   return "Unknown Ad";
 }
 
+// Parse GHL's dateAdded field into an ISO string.
+// GHL sends it as Unix ms, Unix seconds, or ISO string.
+function parseGhlDate(raw: unknown): string | null {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    // ISO string or date string
+    const d = new Date(raw);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  if (typeof raw === "number") {
+    // Unix ms (13 digits) or Unix seconds (10 digits)
+    const ms = raw > 1e12 ? raw : raw * 1000;
+    const d = new Date(ms);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  return null;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json() as Record<string, unknown>;
 
-    // Always log key fields — check Vercel function logs if ad_name is wrong
     const email = String(body.email ?? "").toLowerCase().trim();
     const firstName = String(body.first_name ?? body.name ?? body.full_name ?? "Unknown").trim();
     const phone = String(body.phone ?? "").trim();
     const adName = extractAdName(body);
-    // Source: check explicit source field first (may be tags string), then body.tags
     const source = extractSourceFromTags(isReal(body.source) ? body.source : body.tags);
 
-    // Log everything — check Vercel function logs to debug missing leads
+    // Original GHL contact creation date — used as created_at so re-enrolled
+    // old contacts get their real signup date instead of today's date.
+    const ghlDate = parseGhlDate(body.dateAdded ?? body.date_added ?? body.contactDateAdded);
+
     const attr = body.attributionSource as Record<string, unknown> | undefined;
     console.log("[GHL] received →", {
       email,
       tags: body.tags,
+      source_field: body.source,
       resolved_source: source,
       raw_ad_name: body.ad_name,
       utm_content: attr?.utmContent ?? null,
       utm_campaign: attr?.utmCampaign ?? null,
+      utm_medium: attr?.utmMedium ?? null,
+      utm_source: attr?.utmSource ?? null,
+      attr_raw: attr ?? null,
+      date_added: body.dateAdded ?? body.date_added ?? null,
       resolved_ad_name: adName,
+      ghl_date: ghlDate,
     });
 
     if (!email || !email.includes("@")) {
@@ -140,9 +165,9 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
       }
     } else {
-      const { error } = await supabase.from("leads").insert([
-        { first_name: firstName, email, phone, ad_name: adName, source },
-      ]);
+      const row: Record<string, unknown> = { first_name: firstName, email, phone, ad_name: adName, source };
+      if (ghlDate) row.created_at = ghlDate;
+      const { error } = await supabase.from("leads").insert([row]);
       if (error) {
         console.error("[GHL] insert error:", error);
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
