@@ -126,23 +126,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Valid email required" }, { status: 400 });
     }
 
-    // Deduplicate by email
-    const { data: existing } = await supabase
-      .from("leads")
-      .select("id")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (existing) {
-      return NextResponse.json({ success: true, message: "Lead already exists" });
-    }
-
-    const { error } = await supabase.from("leads").insert([
-      { first_name: firstName, email, phone, ad_name: adName, source },
-    ]);
+    // Upsert — insert new or update ad_name/source on re-enroll
+    const { error } = await supabase.from("leads").upsert(
+      [{ first_name: firstName, email, phone, ad_name: adName, source }],
+      { onConflict: "email", ignoreDuplicates: false }
+    );
 
     if (error) {
-      console.error("[GHL] insert error:", error);
+      console.error("[GHL] upsert error:", error);
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
