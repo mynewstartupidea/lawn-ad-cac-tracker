@@ -126,15 +126,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Valid email required" }, { status: 400 });
     }
 
-    // Upsert — insert new or update ad_name/source on re-enroll
-    const { error } = await supabase.from("leads").upsert(
-      [{ first_name: firstName, email, phone, ad_name: adName, source }],
-      { onConflict: "email", ignoreDuplicates: false }
-    );
+    // Check if lead exists — update ad_name/source if so, insert if not
+    const { data: existing } = await supabase
+      .from("leads")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
 
-    if (error) {
-      console.error("[GHL] upsert error:", error);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    if (existing) {
+      const { error } = await supabase
+        .from("leads")
+        .update({ ad_name: adName, source, first_name: firstName, phone })
+        .eq("email", email);
+      if (error) {
+        console.error("[GHL] update error:", error);
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
+    } else {
+      const { error } = await supabase.from("leads").insert([
+        { first_name: firstName, email, phone, ad_name: adName, source },
+      ]);
+      if (error) {
+        console.error("[GHL] insert error:", error);
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
     }
 
     // Fire server-side Lead event to Meta CAPI — improves match quality from
