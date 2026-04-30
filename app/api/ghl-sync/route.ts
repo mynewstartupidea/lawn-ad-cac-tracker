@@ -87,23 +87,11 @@ async function fetchPage(apiKey: string, locationId: string, startAfter?: number
   };
 }
 
-export async function POST(req: Request) {
+async function runSync(sinceDate: Date): Promise<{ inserted: number; updated: number; skipped: number; pages: number }> {
   const apiKey     = process.env.GHL_API_KEY;
   const locationId = process.env.GHL_LOCATION_ID;
 
-  if (!apiKey || !locationId) {
-    return NextResponse.json({ error: "GHL_API_KEY and GHL_LOCATION_ID required" }, { status: 400 });
-  }
-
-  // Optional: only sync contacts added after this date (ISO string)
-  // Defaults to 90 days ago so we catch everything recent
-  let sinceDate: Date;
-  try {
-    const body = await req.json() as { since?: string };
-    sinceDate = body.since ? new Date(body.since) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-  } catch {
-    sinceDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-  }
+  if (!apiKey || !locationId) throw new Error("GHL_API_KEY and GHL_LOCATION_ID required");
 
   console.log("[GHL Sync] starting, since:", sinceDate.toISOString());
 
@@ -196,5 +184,35 @@ export async function POST(req: Request) {
 
   console.log(`[GHL Sync] done — inserted: ${inserted}, updated: ${updated}, skipped: ${skipped}, pages: ${pages}`);
 
-  return NextResponse.json({ inserted, updated, skipped, pages });
+  return { inserted, updated, skipped, pages };
+}
+
+// GET — called by Vercel cron every hour, syncs last 2 hours
+export async function GET() {
+  try {
+    const since = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const result = await runSync(since);
+    return NextResponse.json({ ok: true, ...result });
+  } catch (err) {
+    console.error("[GHL Sync cron] error:", err);
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
+
+// POST — manual trigger, defaults to last 90 days (full backfill)
+export async function POST(req: Request) {
+  try {
+    let sinceDate: Date;
+    try {
+      const body = await req.json() as { since?: string };
+      sinceDate = body.since ? new Date(body.since) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    } catch {
+      sinceDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    }
+    const result = await runSync(sinceDate);
+    return NextResponse.json(result);
+  } catch (err) {
+    console.error("[GHL Sync] error:", err);
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
 }

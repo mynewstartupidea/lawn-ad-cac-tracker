@@ -3,6 +3,10 @@
     {
       "path": "/api/fb-keepalive",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/ghl-sync",
+      "schedule": "0 * * * *"
     }
   ]
 }
