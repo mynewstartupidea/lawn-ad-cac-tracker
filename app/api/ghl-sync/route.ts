@@ -181,10 +181,10 @@ async function runSync(sinceDate: Date): Promise<{ inserted: number; updated: nu
   return { inserted, updated, skipped, pages };
 }
 
-// GET — called by Vercel cron every hour, syncs last 2 hours
+// GET — called by Vercel cron once a day, syncs last 26 hours (overlap to avoid gaps)
 export async function GET() {
   try {
-    const since = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const since = new Date(Date.now() - 26 * 60 * 60 * 1000);
     const result = await runSync(since);
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
