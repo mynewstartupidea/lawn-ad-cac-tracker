@@ -148,35 +148,29 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Valid email required" }, { status: 400 });
     }
 
-    // Check if lead exists — update ad_name/source if so, insert if not
-    const { data: existing } = await supabase
+    // Check if this email has been seen before — used only for CAPI dedup,
+    // not for blocking insert. Every submission gets its own row so attribution
+    // is always accurate (same person, different ad, different day = 2 rows).
+    const { data: existingForCapi } = await supabase
       .from("leads")
       .select("id")
       .eq("email", email)
       .maybeSingle();
 
-    if (existing) {
-      const { error } = await supabase
-        .from("leads")
-        .update({ ad_name: adName, source, first_name: firstName, phone })
-        .eq("email", email);
-      if (error) {
-        console.error("[GHL] update error:", error);
-        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-      }
-      console.log("[GHL] updated existing lead, skipping CAPI:", email);
-    } else {
-      const row: Record<string, unknown> = { first_name: firstName, email, phone, ad_name: adName, source };
-      if (ghlDate) row.created_at = ghlDate;
-      const { error } = await supabase.from("leads").insert([row]);
-      if (error) {
-        console.error("[GHL] insert error:", error);
-        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-      }
+    const isFirstEver = !existingForCapi;
 
-      // Fire CAPI Lead event only for new leads — NEVER for re-enrollments/updates.
-      // Use ghlDate as eventTime so the event_id hour-bucket matches the original
-      // browser pixel event, enabling proper deduplication.
+    // Always insert — every form submission is a new row with correct date + ad name
+    const row: Record<string, unknown> = { first_name: firstName, email, phone, ad_name: adName, source };
+    if (ghlDate) row.created_at = ghlDate;
+    const { error } = await supabase.from("leads").insert([row]);
+    if (error) {
+      console.error("[GHL] insert error:", error);
+      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    }
+
+    // Only fire CAPI Lead event the first time we ever see this email —
+    // prevents inflating Facebook lead count on re-submissions.
+    if (isFirstEver) {
       const eventTime = ghlDate ? Math.floor(new Date(ghlDate).getTime() / 1000) : undefined;
       sendLeadEvent({
         pixelId:         AD_ACCOUNTS.florida.pixelId,
