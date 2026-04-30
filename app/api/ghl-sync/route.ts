@@ -120,33 +120,27 @@ async function runSync(sinceDate: Date): Promise<{ inserted: number; updated: nu
     const toUpdate: { email: string; ad_name: string; source: string; first_name: string; phone: string }[] = [];
 
     for (const c of contacts) {
-      const email = (c.email ?? "").toLowerCase().trim();
-      const phone = (c.phone ?? "").trim();
-      // Skip contacts that don't have both email and phone — these are incomplete
-      if (!email || !email.includes("@") || !phone) { skipped++; continue; }
+      const email     = (c.email     ?? "").toLowerCase().trim();
+      const phone     = (c.phone     ?? "").trim();
+      const firstName = [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
+
+      // Require email + phone + name — skip Messenger/incomplete contacts
+      if (!email || !email.includes("@") || !phone || !firstName) { skipped++; continue; }
 
       const dateAdded = new Date(c.dateAdded);
       if (dateAdded < sinceDate) { stop = true; break; }
 
-      const firstName = [c.firstName, c.lastName].filter(Boolean).join(" ").trim() || "Unknown";
-      const adName    = extractAdName(c.attributions ?? []);
-      const source    = extractSource(c.tags ?? []);
+      const adName = extractAdName(c.attributions ?? []);
+      const source = extractSource(c.tags ?? []);
 
-      const existing = existingMap.get(email);
+      const existingAdName = existingMap.get(email);
 
-      if (existing === undefined) {
-        // New lead — insert with original GHL date
-        toInsert.push({
-          email,
-          first_name: firstName,
-          phone,
-          ad_name:    adName,
-          source,
-          created_at: c.dateAdded,
-        });
+      if (existingAdName === undefined) {
+        // New lead — insert with original GHL signup date
+        toInsert.push({ email, first_name: firstName, phone, ad_name: adName, source, created_at: c.dateAdded });
         existingMap.set(email, adName);
-      } else if (existing === "Unknown Ad" && adName !== "Unknown Ad") {
-        // Existing lead with bad ad name — update it
+      } else if (adName !== "Unknown Ad" && existingAdName !== adName) {
+        // GHL is source of truth — update if GHL has a real ad name that differs from DB
         toUpdate.push({ email, ad_name: adName, source, first_name: firstName, phone });
         existingMap.set(email, adName);
       } else {

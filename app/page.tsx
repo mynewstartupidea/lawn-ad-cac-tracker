@@ -64,7 +64,7 @@ interface Asset {
 }
 
 type LeadFilter = "all" | "open" | "sold";
-type DateRange  = "7d" | "14d" | "30d" | "all";
+type DateRange  = "today" | "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
 type Account    = "all" | "florida" | "georgia";
@@ -113,10 +113,10 @@ type AdTab      = "chat" | "metrics" | "assets";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DATE_RANGE_LABELS: Record<DateRange, string> = {
-  "7d": "Last 7 days", "14d": "Last 14 days", "30d": "Last 30 days", "all": "All time",
+  "today": "Today", "7d": "Last 7 days", "14d": "Last 14 days", "30d": "Last 30 days", "all": "All time",
 };
 const FB_PRESET: Record<DateRange, string> = {
-  "7d": "last_7d", "14d": "last_14d", "30d": "last_30_days", "all": "maximum",
+  "today": "last_7d", "7d": "last_7d", "14d": "last_14d", "30d": "last_30_days", "all": "maximum",
 };
 const ACCOUNT_IDS: Record<Account, string> = {
   all:     "all",
@@ -517,7 +517,7 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("cac");
 
   // Controls
-  const [dateRange,  setDateRange]  = useState<DateRange>("30d");
+  const [dateRange,  setDateRange]  = useState<DateRange>("today");
   const [account,    setAccount]    = useState<Account>("florida");
   const [adFilter,   setAdFilter]   = useState<string>("all");
   const [leadFilter, setLeadFilter] = useState<LeadFilter>("all");
@@ -752,6 +752,9 @@ export default function Home() {
 
   const cutoff = useMemo(() => {
     if (dateRange === "all") return null;
+    if (dateRange === "today") {
+      const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+    }
     const days = dateRange === "7d" ? 7 : dateRange === "14d" ? 14 : 30;
     const d = new Date(); d.setDate(d.getDate() - days); return d;
   }, [dateRange]);
@@ -1122,7 +1125,7 @@ export default function Home() {
 
             <select value={dateRange} onChange={e => handleDateRange(e.target.value as DateRange)}
               style={{ ...selectStyle, minWidth: 115 }}>
-              {(["7d","14d","30d","all"] as DateRange[]).map(r => (
+              {(["today","7d","14d","30d","all"] as DateRange[]).map(r => (
                 <option key={r} value={r}>{DATE_RANGE_LABELS[r]}</option>
               ))}
             </select>
