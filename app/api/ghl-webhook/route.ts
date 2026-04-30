@@ -164,6 +164,7 @@ export async function POST(req: Request) {
         console.error("[GHL] update error:", error);
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
       }
+      console.log("[GHL] updated existing lead, skipping CAPI:", email);
     } else {
       const row: Record<string, unknown> = { first_name: firstName, email, phone, ad_name: adName, source };
       if (ghlDate) row.created_at = ghlDate;
@@ -172,17 +173,20 @@ export async function POST(req: Request) {
         console.error("[GHL] insert error:", error);
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
       }
-    }
 
-    // Fire server-side Lead event to Meta CAPI — improves match quality from
-    // ~3/10 (browser pixel alone) to 8-9/10 by sending email + phone + name
-    sendLeadEvent({
-      pixelId:         AD_ACCOUNTS.florida.pixelId,
-      email,
-      phone:           phone || undefined,
-      firstName:       firstName !== "Unknown" ? firstName : undefined,
-      eventSourceUrl:  AD_ACCOUNTS.florida.landingUrl.split("?")[0],
-    }).catch(err => console.error("[GHL] CAPI lead error:", err));
+      // Fire CAPI Lead event only for new leads — NEVER for re-enrollments/updates.
+      // Use ghlDate as eventTime so the event_id hour-bucket matches the original
+      // browser pixel event, enabling proper deduplication.
+      const eventTime = ghlDate ? Math.floor(new Date(ghlDate).getTime() / 1000) : undefined;
+      sendLeadEvent({
+        pixelId:         AD_ACCOUNTS.florida.pixelId,
+        email,
+        phone:           phone || undefined,
+        firstName:       firstName !== "Unknown" ? firstName : undefined,
+        eventSourceUrl:  AD_ACCOUNTS.florida.landingUrl.split("?")[0],
+        eventTime,
+      }).catch(err => console.error("[GHL] CAPI lead error:", err));
+    }
 
     return NextResponse.json({ success: true, ad_name: adName });
   } catch (err) {
