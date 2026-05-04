@@ -5,19 +5,6 @@ import { extractSoldEmail } from "../../lib/extractSoldEmail";
 import { sendSoldConversion } from "../../lib/metaCapi";
 import { AD_ACCOUNTS } from "../../lib/adAccounts";
 
-function resolveAccount(adName: string | null): { pixelId: string; value: number }[] {
-  const name = (adName ?? "").toUpperCase();
-  if (name.includes(" GA ") || name.startsWith("GA")) {
-    return [{ pixelId: AD_ACCOUNTS.georgia.pixelId, value: 19 }];
-  }
-  if (name.startsWith("FL") || name.startsWith("FI") || name.includes(" FL") || name.includes(" FI")) {
-    return [{ pixelId: AD_ACCOUNTS.florida.pixelId, value: 99 }];
-  }
-  return [
-    { pixelId: AD_ACCOUNTS.florida.pixelId, value: 99 },
-    { pixelId: AD_ACCOUNTS.georgia.pixelId, value: 19 },
-  ];
-}
 
 async function handleSoldMessage(text: string) {
   const email = extractSoldEmail(text);
@@ -55,18 +42,14 @@ async function handleSoldMessage(text: string) {
 
   console.log("[Slack] sale recorded:", email);
 
-  // Fire conversion event(s) to Meta CAPI
-  const targets = resolveAccount(lead?.ad_name ?? null);
-  await Promise.all(
-    targets.map(t =>
-      sendSoldConversion({
-        pixelId: t.pixelId,
-        email,
-        phone:   lead?.phone,
-        value:   t.value,
-      })
-    )
-  );
+  // Fire conversion event to Meta CAPI — Florida pixel only for now
+  // GA pixel token has no permission yet; fix in Meta Business Manager first
+  await sendSoldConversion({
+    pixelId: AD_ACCOUNTS.florida.pixelId,
+    email,
+    phone:   lead?.phone,
+    value:   99,
+  });
 }
 
 export async function POST(req: Request) {
