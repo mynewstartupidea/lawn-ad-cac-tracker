@@ -10,6 +10,7 @@ interface GhlAttribution {
   utmSource?:   string;
   medium?:      string;
   isFirst?:     boolean;
+  isLast?:      boolean;
 }
 
 interface GhlContact {
@@ -36,20 +37,25 @@ function isReal(val: string | null | undefined): val is string {
   const t = val.trim();
   if (!t) return false;
   if (t.startsWith("{{") && t.endsWith("}}")) return false; // unresolved GHL variable
+  if (/^\d+$/.test(t)) return false; // pure number = raw Facebook ad/campaign ID, not a name
   return true;
 }
 
 function extractAdName(attributions: GhlAttribution[] = []): string {
-  // Prefer the first-touch attribution with utmContent
+  const last  = attributions.find(a => a.isLast);
   const first = attributions.find(a => a.isFirst);
+
+  // Last-touch first — most recent click has the most accurate ad name
+  if (isReal(last?.utmContent))  return last!.utmContent!.trim();
   if (isReal(first?.utmContent)) return first!.utmContent!.trim();
 
-  // Fallback: any attribution with utmContent
+  // Any attribution with a readable utmContent
   for (const a of attributions) {
     if (isReal(a.utmContent)) return a.utmContent!.trim();
   }
 
-  // Last resort: campaign name from first-touch
+  // Campaign name fallback
+  if (isReal(last?.utmCampaign))  return last!.utmCampaign!.trim();
   if (isReal(first?.utmCampaign)) return first!.utmCampaign!.trim();
 
   return "Unknown Ad";

@@ -12,6 +12,7 @@ function isReal(val: unknown): val is string {
   const t = val.trim();
   if (!t) return false;
   if (t.startsWith("{{") && t.endsWith("}}")) return false; // unresolved GHL variable
+  if (/^\d+$/.test(t)) return false; // pure number = raw Facebook ad/campaign ID, not a name
   return true;
 }
 
