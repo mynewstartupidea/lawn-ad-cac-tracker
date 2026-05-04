@@ -120,6 +120,7 @@ export async function POST(req: Request) {
     const email = String(body.email ?? "").toLowerCase().trim();
     const firstName = String(body.first_name ?? body.name ?? body.full_name ?? "Unknown").trim();
     const phone = String(body.phone ?? "").trim();
+    const postalCode = String(body.postal_code ?? body.postalCode ?? body.zip ?? body.zipCode ?? "").trim();
     const adName = extractAdName(body);
     const source = extractSourceFromTags(isReal(body.source) ? body.source : body.tags);
 
@@ -161,7 +162,8 @@ export async function POST(req: Request) {
 
     // Always insert — every form submission is a new row with correct date + ad name
     const row: Record<string, unknown> = { first_name: firstName, email, phone, ad_name: adName, source };
-    if (ghlDate) row.created_at = ghlDate;
+    if (ghlDate)      row.created_at   = ghlDate;
+    if (postalCode)   row.postal_code  = postalCode;
     const { error } = await supabase.from("leads").insert([row]);
     if (error) {
       console.error("[GHL] insert error:", error);

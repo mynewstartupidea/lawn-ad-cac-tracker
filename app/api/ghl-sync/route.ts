@@ -18,6 +18,7 @@ interface GhlContact {
   firstName:   string | null;
   lastName:    string | null;
   phone:       string | null;
+  postalCode:  string | null;
   tags:        string[];
   dateAdded:   string;
   attributions?: GhlAttribution[];
@@ -130,14 +131,17 @@ async function runSync(sinceDate: Date): Promise<{ inserted: number; updated: nu
       const dateAdded = new Date(c.dateAdded);
       if (dateAdded < sinceDate) { stop = true; break; }
 
-      const adName = extractAdName(c.attributions ?? []);
-      const source = extractSource(c.tags ?? []);
+      const adName    = extractAdName(c.attributions ?? []);
+      const source    = extractSource(c.tags ?? []);
+      const postalCode = (c.postalCode ?? "").trim();
 
       const existingAdName = existingMap.get(email);
 
       if (existingAdName === undefined) {
         // New lead — insert with original GHL signup date
-        toInsert.push({ email, first_name: firstName, phone, ad_name: adName, source, created_at: c.dateAdded });
+        const row: Record<string, unknown> = { email, first_name: firstName, phone, ad_name: adName, source, created_at: c.dateAdded };
+        if (postalCode) row.postal_code = postalCode;
+        toInsert.push(row);
         existingMap.set(email, adName);
       } else if (adName !== "Unknown Ad" && existingAdName !== adName) {
         // GHL is source of truth — update if GHL has a real ad name that differs from DB
