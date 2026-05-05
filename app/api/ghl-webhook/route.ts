@@ -171,16 +171,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
-    // Only fire CAPI Lead event the first time we ever see this email —
-    // prevents inflating Facebook lead count on re-submissions.
-    if (isFirstEver) {
+    // Only fire CAPI Lead event for Facebook-sourced leads on their first submission.
+    // Firing for Google/organic/EDDM leads inflates Facebook's conversion count because
+    // Meta matches those emails against its user database and claims credit for them.
+    const isFbSource = source === "FBFL" || source === "FBGA";
+    if (isFirstEver && isFbSource) {
+      const pixelId   = source === "FBGA" ? AD_ACCOUNTS.georgia.pixelId : AD_ACCOUNTS.florida.pixelId;
+      const acct      = source === "FBGA" ? AD_ACCOUNTS.georgia          : AD_ACCOUNTS.florida;
       const eventTime = ghlDate ? Math.floor(new Date(ghlDate).getTime() / 1000) : undefined;
       sendLeadEvent({
-        pixelId:         AD_ACCOUNTS.florida.pixelId,
+        pixelId,
         email,
         phone:           phone || undefined,
         firstName:       firstName !== "Unknown" ? firstName : undefined,
-        eventSourceUrl:  AD_ACCOUNTS.florida.landingUrl.split("?")[0],
+        eventSourceUrl:  acct.landingUrl.split("?")[0],
         eventTime,
       }).catch(err => console.error("[GHL] CAPI lead error:", err));
     }
