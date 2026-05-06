@@ -1668,7 +1668,7 @@ export default function Home() {
                                     style={{ borderBottom: i < adStats.length - 1 ? `1px solid ${C.border}` : "none", transition: "background 0.12s" }}
                                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "#f8fafc"}
                                     onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}>
-                                    <td style={{ padding: "13px 20px", fontWeight: 600, color: C.text }}>{row.adName}</td>
+                                    <td style={{ padding: "13px 20px", fontWeight: 600, color: C.text, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.adName}>{row.adName}</td>
                                     <td style={{ padding: "13px 20px" }}>
                                       {syncingFb && row.spend === 0
                                         ? <div className="skeleton" style={{ height: 14, width: 56, borderRadius: 4 }} />
