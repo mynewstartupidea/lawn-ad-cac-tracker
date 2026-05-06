@@ -113,7 +113,7 @@ type AdTab      = "chat" | "metrics" | "assets";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DATE_RANGE_LABELS: Record<DateRange, string> = {
-  "today": "Today", "7d": "Last 7 days", "14d": "Last 14 days", "30d": "Last 30 days", "all": "All time",
+  "today": "Last 24h", "7d": "Last 7 days", "14d": "Last 14 days", "30d": "Last 30 days", "all": "All time",
 };
 const FB_PRESET: Record<DateRange, string> = {
   "today": "last_7d", "7d": "last_7d", "14d": "last_14d", "30d": "last_30_days", "all": "maximum",
@@ -753,7 +753,7 @@ export default function Home() {
   const cutoff = useMemo(() => {
     if (dateRange === "all") return null;
     if (dateRange === "today") {
-      const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+      return new Date(Date.now() - 24 * 60 * 60 * 1000);
     }
     const days = dateRange === "7d" ? 7 : dateRange === "14d" ? 14 : 30;
     const d = new Date(); d.setDate(d.getDate() - days); return d;
