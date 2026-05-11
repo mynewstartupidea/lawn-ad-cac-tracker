@@ -151,32 +151,64 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Valid email required" }, { status: 400 });
     }
 
-    // Check if this email has been seen before — used only for CAPI dedup,
-    // not for blocking insert. Every submission gets its own row so attribution
-    // is always accurate (same person, different ad, different day = 2 rows).
+    // Check for a same-day record for this email.
+    // GHL fires the webhook twice for the same contact: once on creation (no tags, source=ghl)
+    // and again when the workflow assigns the FB tag (full name, source=FBFL/GA/MIAMI).
+    // If a same-day record exists with a weaker source, update it instead of inserting a duplicate.
+    const todayUtc = new Date(); todayUtc.setUTCHours(0, 0, 0, 0);
+    const { data: todayRecord } = await supabase
+      .from("leads")
+      .select("id, source")
+      .eq("email", email)
+      .gte("created_at", todayUtc.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle() as { data: { id: string; source: string } | null };
+
+    // FB source is authoritative; ghl = incomplete first-fire from GHL
+    const isFbSource  = (s: string) => ["FBFL","FBGA","FBMIAMI"].includes(s);
+    const existingIsWeak = todayRecord && !isFbSource(todayRecord.source);
+    const incomingIsBetter = isFbSource(source);
+
+    const row: Record<string, unknown> = { first_name: firstName, email, phone, ad_name: adName, source };
+    if (ghlDate)    row.created_at  = ghlDate;
+    if (postalCode) row.postal_code = postalCode;
+
+    if (existingIsWeak && incomingIsBetter) {
+      // Upgrade the weak ghl record with the real FB attribution
+      const { error } = await supabase.from("leads").update(row).eq("id", todayRecord!.id);
+      if (error) {
+        console.error("[GHL] update error:", error);
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
+      console.log("[GHL] upgraded existing ghl record to", source, "for", email);
+    } else if (todayRecord && !incomingIsBetter) {
+      // Same-day duplicate with no better data — skip to avoid inflating lead count
+      console.log("[GHL] skipping same-day duplicate for", email, "(existing:", todayRecord.source, "incoming:", source + ")");
+      return NextResponse.json({ success: true, ad_name: adName, skipped: true });
+    } else {
+      // New lead (different day or genuinely new) — insert
+      const { error } = await supabase.from("leads").insert([row]);
+      if (error) {
+        console.error("[GHL] insert error:", error);
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
+    }
+
+    // CAPI fires only for first-ever FB lead (not re-submissions on different days)
     const { data: existingForCapi } = await supabase
       .from("leads")
       .select("id")
       .eq("email", email)
+      .lt("created_at", todayUtc.toISOString())
+      .limit(1)
       .maybeSingle();
-
-    const isFirstEver = !existingForCapi;
-
-    // Always insert — every form submission is a new row with correct date + ad name
-    const row: Record<string, unknown> = { first_name: firstName, email, phone, ad_name: adName, source };
-    if (ghlDate)      row.created_at   = ghlDate;
-    if (postalCode)   row.postal_code  = postalCode;
-    const { error } = await supabase.from("leads").insert([row]);
-    if (error) {
-      console.error("[GHL] insert error:", error);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-    }
+    const isFirstEver = !existingForCapi && !existingIsWeak;
 
     // Only fire CAPI Lead event for Facebook-sourced leads on their first submission.
     // Firing for Google/organic/EDDM leads inflates Facebook's conversion count because
     // Meta matches those emails against its user database and claims credit for them.
-    const isFbSource = source === "FBFL" || source === "FBGA" || source === "FBMIAMI";
-    if (isFirstEver && isFbSource) {
+    if (isFirstEver && isFbSource(source)) {
       const acct      = source === "FBGA" ? AD_ACCOUNTS.georgia : source === "FBMIAMI" ? AD_ACCOUNTS.miami : AD_ACCOUNTS.florida;
       const pixelId   = acct.pixelId;
       const eventTime = ghlDate ? Math.floor(new Date(ghlDate).getTime() / 1000) : undefined;
