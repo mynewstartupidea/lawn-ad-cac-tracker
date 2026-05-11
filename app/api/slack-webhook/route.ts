@@ -24,12 +24,12 @@ async function handleSoldMessage(text: string) {
     return;
   }
 
-  // Look up lead to get phone + ad_name for pixel routing
+  // Look up lead to get phone + source for pixel routing
   const { data: lead } = await supabase
     .from("leads")
-    .select("phone, ad_name")
+    .select("phone, ad_name, source")
     .eq("email", email)
-    .maybeSingle() as { data: { phone?: string; ad_name?: string } | null };
+    .maybeSingle() as { data: { phone?: string; ad_name?: string; source?: string } | null };
 
   const { error } = await supabase
     .from("sales")
@@ -40,12 +40,16 @@ async function handleSoldMessage(text: string) {
     return;
   }
 
-  console.log("[Slack] sale recorded:", email);
+  console.log("[Slack] sale recorded:", email, "| source:", lead?.source);
 
-  // Fire conversion event to Meta CAPI — Florida pixel only for now
-  // GA pixel token has no permission yet; fix in Meta Business Manager first
+  // Route Purchase event to the correct pixel based on lead source
+  const source  = lead?.source ?? "";
+  const acct    = source === "FBGA"    ? AD_ACCOUNTS.georgia
+                : source === "FBMIAMI" ? AD_ACCOUNTS.miami
+                : AD_ACCOUNTS.florida; // default to FL for FBFL + unknown
+
   await sendSoldConversion({
-    pixelId: AD_ACCOUNTS.florida.pixelId,
+    pixelId: acct.pixelId,
     email,
     phone:   lead?.phone,
     value:   99,
