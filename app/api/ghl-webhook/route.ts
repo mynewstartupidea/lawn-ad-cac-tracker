@@ -20,15 +20,16 @@ function isReal(val: unknown): val is string {
 // Looks for known source tags: FBFL, FBGA, Google, etc.
 // Falls back to first tag found, then "ghl".
 const SOURCE_TAG_PATTERNS: [RegExp, string][] = [
-  [/^FB[\s_-]?FL$/i,   "FBFL"],   // fb fl, FBFL, fb-fl, fb_fl → Florida
-  [/^FB[\s_-]?GA$/i,   "FBGA"],   // fb ga, FBGA → Georgia
-  [/^FB[\s_-]?FL/i,    "FBFL"],   // anything starting with fb fl
-  [/^FB[\s_-]?GA/i,    "FBGA"],   // anything starting with fb ga
-  [/^google$/i,        "Google"],
-  [/^gg$/i,            "Google"],
-  [/^ig$/i,            "Instagram"],
-  [/^organic$/i,       "Organic"],
-  [/^eddm$/i,          "EDDM"],
+  [/^FB[\s_-]?FL$/i,     "FBFL"],    // fb fl, FBFL, fb-fl, fb_fl → Florida
+  [/^FB[\s_-]?GA$/i,     "FBGA"],    // fb ga, FBGA → Georgia
+  [/^fbmiami$/i,         "FBMIAMI"], // fbmiami → Miami
+  [/^FB[\s_-]?FL/i,      "FBFL"],    // anything starting with fb fl
+  [/^FB[\s_-]?GA/i,      "FBGA"],    // anything starting with fb ga
+  [/^google$/i,          "Google"],
+  [/^gg$/i,              "Google"],
+  [/^ig$/i,              "Instagram"],
+  [/^organic$/i,         "Organic"],
+  [/^eddm$/i,            "EDDM"],
 ];
 
 function normalizeTags(raw: unknown): string[] {
@@ -174,10 +175,10 @@ export async function POST(req: Request) {
     // Only fire CAPI Lead event for Facebook-sourced leads on their first submission.
     // Firing for Google/organic/EDDM leads inflates Facebook's conversion count because
     // Meta matches those emails against its user database and claims credit for them.
-    const isFbSource = source === "FBFL" || source === "FBGA";
+    const isFbSource = source === "FBFL" || source === "FBGA" || source === "FBMIAMI";
     if (isFirstEver && isFbSource) {
-      const pixelId   = source === "FBGA" ? AD_ACCOUNTS.georgia.pixelId : AD_ACCOUNTS.florida.pixelId;
-      const acct      = source === "FBGA" ? AD_ACCOUNTS.georgia          : AD_ACCOUNTS.florida;
+      const acct      = source === "FBGA" ? AD_ACCOUNTS.georgia : source === "FBMIAMI" ? AD_ACCOUNTS.miami : AD_ACCOUNTS.florida;
+      const pixelId   = acct.pixelId;
       const eventTime = ghlDate ? Math.floor(new Date(ghlDate).getTime() / 1000) : undefined;
       sendLeadEvent({
         pixelId,

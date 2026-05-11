@@ -29,6 +29,20 @@ export const AD_ACCOUNTS = {
     fallbackImageHash: "685c0408f252f3ead5e2aabde65e3735",
     pixelId:           "642251691534776",
   },
+  miami: {
+    accountId:       "1320357830041204",
+    pageId:          "1860398430899950",
+    instagramUserId: "17841406994453363",
+    offer:           "$99 first lawn treatment — professional weed control and lawn care service",
+    offerShort:      "$99",
+    originalPrices:  ["$499"],
+    landingUrl:      "https://www.liquid-lawn.com/lawncareforms-6164-3952-9459-2110?utm_content={{ad.name}}",
+    cta:             "LEARN_MORE",
+    location:        "Miami",
+    label:           "Liquid Lawn Miami",
+    fallbackImageHash: "2310b876955b9ebbcf5d4adce07c733d",
+    pixelId:           "950249787818613",
+  },
 } as const;
 
 export type AdAccount = keyof typeof AD_ACCOUNTS;

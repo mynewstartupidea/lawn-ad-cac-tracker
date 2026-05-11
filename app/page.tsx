@@ -67,7 +67,7 @@ type LeadFilter = "all" | "open" | "sold";
 type DateRange  = "today" | "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
-type Account    = "all" | "florida" | "georgia";
+type Account    = "all" | "florida" | "georgia" | "miami";
 type Tab        = "cac" | "ads" | "eddm" | "drive" | "report";
 
 interface DriveFile {
@@ -122,11 +122,13 @@ const ACCOUNT_IDS: Record<Account, string> = {
   all:     "all",
   florida: "435459903489885",
   georgia: "1467364857363196",
+  miami:   "1320357830041204",
 };
 const ACCOUNT_LABELS: Record<Account, string> = {
-  all:     "Both Accounts",
+  all:     "All Accounts",
   florida: "Liquid Lawn Florida",
   georgia: "Liquid Lawn Georgia",
+  miami:   "Liquid Lawn Miami",
 };
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -717,7 +719,7 @@ export default function Home() {
       await fetchSupabase();
       setLoadingData(false);
       await syncFacebook(dateRange, account);
-      const others = (["all", "florida", "georgia"] as Account[]).filter(a => a !== account);
+      const others = (["all", "florida", "georgia", "miami"] as Account[]).filter(a => a !== account);
       others.forEach(a => {
         fetch(`/api/facebook-spend?date_preset=${FB_PRESET[dateRange]}&account=${ACCOUNT_IDS[a]}`).catch(() => {});
       });
@@ -1118,7 +1120,7 @@ export default function Home() {
 
             <select value={account} onChange={e => handleAccount(e.target.value as Account)}
               style={{ ...selectStyle, minWidth: 155 }}>
-              {(["all","florida","georgia"] as Account[]).map(a => (
+              {(["all","florida","georgia","miami"] as Account[]).map(a => (
                 <option key={a} value={a}>{ACCOUNT_LABELS[a]}</option>
               ))}
             </select>
@@ -2637,13 +2639,15 @@ export default function Home() {
           ];
 
           const ACCOUNT_LABELS_LOCAL: Record<Account, string> = {
-            all:     "Both Accounts",
+            all:     "All Accounts",
             florida: "Florida",
             georgia: "Georgia",
+            miami:   "Miami",
           };
           const ACCOUNT_ID_TO_LABEL: Record<string, string> = {
             "435459903489885":  "Florida",
             "1467364857363196": "Georgia",
+            "1320357830041204": "Miami",
           };
 
           const sortedFiltered = (() => {

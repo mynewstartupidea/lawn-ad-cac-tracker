@@ -64,6 +64,7 @@ function extractAdName(attributions: GhlAttribution[] = []): string {
 function extractSource(tags: string[]): string {
   for (const tag of tags) {
     const t = tag.trim();
+    if (/^fbmiami$/i.test(t))    return "FBMIAMI";
     if (/^FB[\s_-]?FL/i.test(t)) return "FBFL";
     if (/^FB[\s_-]?GA/i.test(t)) return "FBGA";
     if (/^google$/i.test(t) || /^gg$/i.test(t)) return "Google";
