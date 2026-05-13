@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 
-const FB_BASE = "https://graph.facebook.com/v21.0";
-
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -16,13 +14,6 @@ function dateFilter(range: string): string | null {
   const d = new Date();
   d.setDate(d.getDate() - days[range]);
   return d.toISOString();
-}
-
-function fbDatePreset(range: string): string {
-  const map: Record<string, string> = {
-    "7d": "last_7d", "14d": "last_14d", "30d": "last_30_days", "all": "maximum",
-  };
-  return map[range] || "last_30_days";
 }
 
 async function queryData(range: string) {
@@ -130,49 +121,6 @@ async function toolGetAdDetails(adName: string, range: string): Promise<string> 
   ].join("\n");
 }
 
-async function toolGetFbInsights(adName: string, range: string): Promise<string> {
-  const accessToken   = process.env.FACEBOOK_ACCESS_TOKEN;
-  const accountIdsRaw = process.env.FACEBOOK_AD_ACCOUNT_IDS || process.env.FACEBOOK_AD_ACCOUNT_ID;
-  if (!accessToken || !accountIdsRaw) return "Facebook API not connected.";
-
-  const accountIds = accountIdsRaw.split(",").map(s => s.trim()).filter(Boolean);
-  const preset = fbDatePreset(range);
-  const fields = "ad_name,spend,impressions,clicks,ctr,cpc,reach";
-
-  const results = await Promise.all(
-    accountIds.map(async id => {
-      const url = `${FB_BASE}/act_${id}/insights?fields=${fields}&level=ad&date_preset=${preset}&access_token=${accessToken}`;
-      const res  = await fetch(url);
-      const json = await res.json();
-      return (json.data ?? []) as { ad_name: string; spend: string; impressions: string; clicks: string; ctr: string; cpc: string }[];
-    })
-  );
-
-  const all = results.flat();
-  const match = adName === "all"
-    ? all
-    : all.filter(r => r.ad_name?.toLowerCase().includes(adName.toLowerCase()));
-
-  if (!match.length) return `No Facebook data found for "${adName}" in ${preset}.`;
-
-  if (adName === "all") {
-    const totalSpend = match.reduce((s, r) => s + parseFloat(r.spend || "0"), 0);
-    const totalClicks = match.reduce((s, r) => s + parseFloat(r.clicks || "0"), 0);
-    const totalImpressions = match.reduce((s, r) => s + parseFloat(r.impressions || "0"), 0);
-    const ctr = totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : "0";
-    const topAds = [...match].sort((a, b) => parseFloat(b.spend) - parseFloat(a.spend)).slice(0, 5);
-    const topLines = topAds.map(r => `  ${r.ad_name}: $${parseFloat(r.spend).toFixed(0)} spend, ${r.clicks} clicks`);
-    return [
-      `Facebook summary (${preset}): Total spend $${totalSpend.toFixed(2)}, ${totalClicks} clicks, CTR ${ctr}%`,
-      "Top 5 by spend:",
-      ...topLines,
-    ].join("\n");
-  }
-
-  const r = match[0];
-  return `Facebook: "${r.ad_name}" (${preset}): Spend $${parseFloat(r.spend).toFixed(2)}, Clicks ${r.clicks}, CTR ${parseFloat(r.ctr).toFixed(2)}%, CPC $${parseFloat(r.cpc).toFixed(2)}`;
-}
-
 // ─── Tools definition ─────────────────────────────────────────────────────────
 
 const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -219,28 +167,12 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "get_fb_insights",
-      description: "Get live Facebook Ads API data: spend, clicks, CTR, CPC for ads. Use ad_name='all' for overall summary",
-      parameters: {
-        type: "object",
-        properties: {
-          ad_name:    { type: "string", description: "Ad name or 'all' for totals" },
-          date_range: { type: "string", enum: ["7d", "14d", "30d", "all"], description: "Time range" },
-        },
-        required: ["ad_name", "date_range"],
-      },
-    },
-  },
 ];
 
 async function runTool(name: string, args: Record<string, string>): Promise<string> {
   if (name === "get_overview")     return toolGetOverview(args.date_range || "30d");
   if (name === "get_ad_breakdown") return toolGetAdBreakdown(args.date_range || "30d");
   if (name === "get_ad_details")   return toolGetAdDetails(args.ad_name || "", args.date_range || "30d");
-  if (name === "get_fb_insights")  return toolGetFbInsights(args.ad_name || "all", args.date_range || "30d");
   return "Unknown tool.";
 }
 
@@ -261,7 +193,7 @@ export async function POST(req: Request) {
     "You are a growth analyst for Liquid Lawn, a lawn care company running Facebook ads.",
     "You have full access to their CAC (Customer Acquisition Cost) dashboard data via function calling.",
     `The user's currently selected date range filter is ${dateRange === "7d" ? "last 7 days" : dateRange === "14d" ? "last 14 days" : dateRange === "30d" ? "last 30 days" : "all time"} — use this as the default date_range in all tool calls unless the user specifies otherwise.`,
-    "Data sources: leads come from GoHighLevel (CRM), sales come from Slack (when the team marks a deal closed), ad spend comes from Facebook Ads API.",
+    "Data sources: leads come from GoHighLevel (CRM), sales come from Slack (when the team marks a deal closed), ad spend is manually logged.",
     "CAC = total ad spend / number of sales. CPL = spend / leads. Conversion rate = sales / leads.",
     "When asked about best performing ads, call get_ad_breakdown and rank by lowest CAC (or most sales). When asked about a specific ad, call get_ad_details.",
     "For questions about spend, clicks, impressions or Facebook-specific data, use get_fb_insights.",

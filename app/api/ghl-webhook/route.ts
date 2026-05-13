@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../lib/supabase";
-import { sendLeadEvent } from "../../lib/metaCapi";
-import { AD_ACCOUNTS } from "../../lib/adAccounts";
 
 // Checks whether a value is a real non-empty string.
 // Filters out:
@@ -192,33 +190,6 @@ export async function POST(req: Request) {
         console.error("[GHL] insert error:", error);
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
       }
-    }
-
-    // CAPI fires only for first-ever FB lead (not re-submissions on different days)
-    const { data: existingForCapi } = await supabase
-      .from("leads")
-      .select("id")
-      .eq("email", email)
-      .lt("created_at", twoHoursAgo.toISOString())
-      .limit(1)
-      .maybeSingle();
-    const isFirstEver = !existingForCapi && !existingIsWeak;
-
-    // Only fire CAPI Lead event for Facebook-sourced leads on their first submission.
-    // Firing for Google/organic/EDDM leads inflates Facebook's conversion count because
-    // Meta matches those emails against its user database and claims credit for them.
-    if (isFirstEver && isFbSource(source)) {
-      const acct      = source === "FBGA" ? AD_ACCOUNTS.georgia : source === "FBMIAMI" ? AD_ACCOUNTS.miami : AD_ACCOUNTS.florida;
-      const pixelId   = acct.pixelId;
-      const eventTime = ghlDate ? Math.floor(new Date(ghlDate).getTime() / 1000) : undefined;
-      sendLeadEvent({
-        pixelId,
-        email,
-        phone:           phone || undefined,
-        firstName:       firstName !== "Unknown" ? firstName : undefined,
-        eventSourceUrl:  acct.landingUrl.split("?")[0],
-        eventTime,
-      }).catch(err => console.error("[GHL] CAPI lead error:", err));
     }
 
     return NextResponse.json({ success: true, ad_name: adName });

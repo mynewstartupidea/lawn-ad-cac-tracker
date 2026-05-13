@@ -29,30 +29,11 @@ interface AdSpendRecord {
   updated_at: string;
 }
 
-interface FbMetrics {
-  spend: number;
-  impressions: number;
-  clicks: number;
-  reach: number;
-  ctr: number;
-  cpm: number;
-  cpc: number;
-}
-
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
   ts: Date;
-}
-
-interface Campaign {
-  id: string;
-  name: string;
-  status: "ACTIVE" | "PAUSED" | "DELETED" | "ARCHIVED";
-  daily_budget?: string;
-  lifetime_budget?: string;
-  objective?: string;
 }
 
 interface Asset {
@@ -67,8 +48,7 @@ type LeadFilter = "all" | "open" | "sold";
 type DateRange  = "today" | "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
-type Account    = "all" | "florida" | "georgia" | "miami";
-type Tab        = "cac" | "ads" | "eddm" | "drive" | "report";
+type Tab        = "cac" | "eddm" | "drive";
 
 interface DriveFile {
   id: string;
@@ -83,52 +63,11 @@ interface DriveAdMatch {
   matchScore: number;
 }
 
-interface AdReportItem {
-  adId: string;
-  adName: string;
-  status: string;
-  effectiveStatus: string;
-  spend: number;
-  impressions: number;
-  clicks: number;
-  ctr: number;
-  reach: number;
-  cpm: number;
-  results: number;
-  costPerResult: number;
-  thumbnailUrl?: string;
-  accountId: string;
-}
-interface AdReportSummary {
-  total: number;
-  active: number;
-  inactive: number;
-  totalSpend: number;
-  totalResults: number;
-  costPerResult: number;
-  avgCtr: number;
-}
-type AdTab      = "chat" | "metrics" | "assets";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DATE_RANGE_LABELS: Record<DateRange, string> = {
   "today": "Last 24h", "7d": "Last 7 days", "14d": "Last 14 days", "30d": "Last 30 days", "all": "All time",
-};
-const FB_PRESET: Record<DateRange, string> = {
-  "today": "last_7d", "7d": "last_7d", "14d": "last_14d", "30d": "last_30_days", "all": "maximum",
-};
-const ACCOUNT_IDS: Record<Account, string> = {
-  all:     "all",
-  florida: "435459903489885",
-  georgia: "1467364857363196",
-  miami:   "1320357830041204",
-};
-const ACCOUNT_LABELS: Record<Account, string> = {
-  all:     "All Accounts",
-  florida: "Liquid Lawn Florida",
-  georgia: "Liquid Lawn Georgia",
-  miami:   "Liquid Lawn Miami",
 };
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -259,29 +198,6 @@ function MetricCard({ label, value, sub, icon, accentColor, accentSoft, loading 
   );
 }
 
-// ─── FB Metric Pill ───────────────────────────────────────────────────────────
-
-function FbPill({ label, value, loading }: { label: string; value: string; loading: boolean }) {
-  return (
-    <div style={{
-      background: C.card,
-      border: `1px solid ${loading ? "#1877f230" : C.border}`,
-      borderRadius: 12,
-      padding: "14px 16px",
-      flex: 1,
-      minWidth: 120,
-      transition: "border-color 0.3s",
-      boxShadow: C.shadow,
-    }}>
-      <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 6 }}>
-        {label}
-      </p>
-      {loading
-        ? <div className="skeleton" style={{ height: 20, width: 64, borderRadius: 4 }} />
-        : <p style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{value}</p>}
-    </div>
-  );
-}
 
 // ─── Sort Icon ────────────────────────────────────────────────────────────────
 
@@ -507,41 +423,17 @@ export default function Home() {
   const [leads, setLeads]       = useState<Lead[]>([]);
   const [sales, setSales]       = useState<Sale[]>([]);
   const [adSpends, setAdSpends] = useState<Record<string, { spend: number; source: string }>>({});
-  const [fbMetrics, setFbMetrics] = useState<FbMetrics | null>(null);
-
   const [loadingData, setLoadingData] = useState(true);
-  const [syncingFb,   setSyncingFb]   = useState(false);
-  const [fbError,     setFbError]     = useState<string | null>(null);
-  const [lastSynced,  setLastSynced]  = useState<Date | null>(null);
-  const [relTime,     setRelTime]     = useState("");
-
   // Navigation
   const [tab, setTab] = useState<Tab>("cac");
 
   // Controls
   const [dateRange,  setDateRange]  = useState<DateRange>("today");
-  const [account,    setAccount]    = useState<Account>("florida");
   const [adFilter,   setAdFilter]   = useState<string>("all");
   const [leadFilter, setLeadFilter] = useState<LeadFilter>("all");
   const [search,     setSearch]     = useState("");
   const [sortCol,    setSortCol]    = useState<SortCol>("leads");
   const [sortDir,    setSortDir]    = useState<SortDir>("desc");
-
-  // Ad Management inner tab
-  const [adTab, setAdTab] = useState<AdTab>("chat");
-
-  // Ad Management AI Chat state
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      text: "Hi! I can help you manage your Facebook Ads campaigns. Try asking me to pause a campaign, show performance, or adjust budgets.",
-      ts: new Date(),
-    },
-  ]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatThinking, setChatThinking] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // CAC Dashboard AI Chat state
   const [cacChatOpen, setCacChatOpen] = useState(false);
@@ -557,11 +449,6 @@ export default function Home() {
   const [cacChatThinking, setCacChatThinking] = useState(false);
   const [cacChatHasUnread, setCacChatHasUnread] = useState(false);
   const cacChatEndRef = useRef<HTMLDivElement>(null);
-
-  // Campaigns state
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
-  const [togglingCampaign, setTogglingCampaign] = useState<string | null>(null);
 
   // Brand assets state
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -611,40 +498,12 @@ export default function Home() {
   const [driveFolderUrl, setDriveFolderUrl] = useState<string>("");
   const [driveFolderInput, setDriveFolderInput] = useState<string>("");
 
-  // Ad Performance Report state
-  const [fbReport,           setFbReport]           = useState<AdReportItem[] | null>(null);
-  const [fbReportLoading,    setFbReportLoading]    = useState(false);
-  const [fbReportError,      setFbReportError]      = useState<string | null>(null);
-  const [fbReportAccount,    setFbReportAccount]    = useState<Account>("all");
-  const [fbReportFilter,     setFbReportFilter]     = useState<"all" | "active" | "paused">("all");
-  const [fbReportSearch,     setFbReportSearch]     = useState("");
-  const [fbReportDatePreset, setFbReportDatePreset] = useState("last_7d");
-  const [fbReportSummary,    setFbReportSummary]    = useState<AdReportSummary | null>(null);
-  const [fbReportPage,       setFbReportPage]       = useState(1);
-  const [fbReportSortCol,    setFbReportSortCol]    = useState<"adName" | "spend" | "reach" | "cpm" | "ctr" | "impressions" | "clicks" | "results" | "costPerResult">("spend");
-  const [fbReportSortDir,    setFbReportSortDir]    = useState<"asc" | "desc">("desc");
-  const [fbReportSince,      setFbReportSince]      = useState("");
-  const [fbReportUntil,      setFbReportUntil]      = useState("");
-
   // Load saved Drive folder URL from localStorage
   useEffect(() => {
     const saved = localStorage.getItem("driveFolderUrl") ?? "";
     setDriveFolderUrl(saved);
     setDriveFolderInput(saved);
   }, []);
-
-  // Relative time ticker
-  useEffect(() => {
-    if (!lastSynced) return;
-    setRelTime(relativeTime(lastSynced));
-    const id = setInterval(() => setRelTime(relativeTime(lastSynced)), 15_000);
-    return () => clearInterval(id);
-  }, [lastSynced]);
-
-  // Scroll chat to bottom
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages]);
 
   useEffect(() => {
     cacChatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -664,34 +523,6 @@ export default function Home() {
       const map: Record<string, { spend: number; source: string }> = {};
       for (const s of spr.data as AdSpendRecord[]) map[s.ad_name] = { spend: s.spend, source: s.source };
       setAdSpends(map);
-    }
-  }, []);
-
-  // ── Fetch Facebook ──────────────────────────────────────────────────────────
-
-  const syncFacebook = useCallback(async (range: DateRange, acct: Account) => {
-    setSyncingFb(true);
-    setFbError(null);
-    try {
-      const accountParam = ACCOUNT_IDS[acct];
-      const url = `/api/facebook-spend?date_preset=${FB_PRESET[range]}&account=${accountParam}`;
-      const res  = await fetch(url);
-      const data = await res.json();
-      if (data.error) {
-        setFbError(data.error);
-      } else {
-        const map: Record<string, { spend: number; source: string }> = {};
-        for (const [k, v] of Object.entries(data.spends as Record<string, number>)) {
-          map[k] = { spend: v, source: "facebook" };
-        }
-        setAdSpends(prev => ({ ...prev, ...map }));
-        setFbMetrics(data.metrics ?? null);
-        setLastSynced(new Date());
-      }
-    } catch {
-      setFbError("Could not reach Facebook API.");
-    } finally {
-      setSyncingFb(false);
     }
   }, []);
 
@@ -718,37 +549,17 @@ export default function Home() {
       setLoadingData(true);
       await fetchSupabase();
       setLoadingData(false);
-      await syncFacebook(dateRange, account);
-      const others = (["all", "florida", "georgia", "miami"] as Account[]).filter(a => a !== account);
-      others.forEach(a => {
-        fetch(`/api/facebook-spend?date_preset=${FB_PRESET[dateRange]}&account=${ACCOUNT_IDS[a]}`).catch(() => {});
-      });
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ── Control handlers ──────────────────────────────────────────────────────
-
-  const clearFbData = useCallback(() => {
-    setFbMetrics(null);
-    setAdSpends(prev => {
-      const next: Record<string, { spend: number; source: string }> = {};
-      for (const [k, v] of Object.entries(prev)) {
-        if (v.source !== "facebook") next[k] = v;
-      }
-      return next;
-    });
-  }, []);
-
-  const handleDateRange = (r: DateRange) => { setDateRange(r); clearFbData(); syncFacebook(r, account); };
-  const handleAccount   = (a: Account)   => { setAccount(a);   clearFbData(); syncFacebook(dateRange, a); };
 
   const refresh = useCallback(async () => {
     setLoadingData(true);
     await fetchSupabase();
     setLoadingData(false);
-    syncFacebook(dateRange, account);
-  }, [fetchSupabase, syncFacebook, dateRange, account]);
+  }, [fetchSupabase]);
+
+  const handleDateRange = (r: DateRange) => setDateRange(r);
 
   // ── Date cutoff ──────────────────────────────────────────────────────────
 
@@ -780,7 +591,6 @@ export default function Home() {
       const spend = adSpends[adName]?.spend ?? 0;
       return {
         adName, leads: s.leads, sales: s.sales, spend,
-        fromFacebook: adSpends[adName]?.source === "facebook",
         conv: s.leads > 0 ? (s.sales / s.leads) * 100 : 0,
         cac:  s.sales > 0 && spend > 0 ? spend / s.sales : 0,
       };
@@ -825,79 +635,6 @@ export default function Home() {
     else { setSortCol(col); setSortDir("desc"); }
   };
 
-  // ── Ad Performance Report fetch ───────────────────────────────────────────
-
-  const fetchFbReport = useCallback(async (acct: Account, datePreset: string, since?: string, until?: string) => {
-    setFbReportLoading(true);
-    setFbReportError(null);
-    setFbReport(null);
-    setFbReportSummary(null);
-    try {
-      const params = new URLSearchParams({ account: ACCOUNT_IDS[acct] });
-      if (since && until) {
-        params.set("since", since);
-        params.set("until", until);
-      } else {
-        params.set("date_preset", datePreset);
-      }
-      const res  = await fetch(`/api/facebook-report?${params}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setFbReport(data.ads ?? []);
-      setFbReportSummary(data.summary ?? null);
-    } catch (err) {
-      setFbReportError(err instanceof Error ? err.message : "Failed to fetch report");
-    } finally {
-      setFbReportLoading(false);
-    }
-  }, []);
-
-  // ── Chat handler (real OpenAI) ────────────────────────────────────────────
-
-  const sendChat = useCallback(async (text: string) => {
-    if (!text.trim()) return;
-    const userMsg: ChatMessage = { id: Date.now().toString(), role: "user", text: text.trim(), ts: new Date() };
-    setChatMessages(prev => [...prev, userMsg]);
-    setChatInput("");
-    setChatThinking(true);
-    try {
-      const history = chatMessages
-        .filter(m => m.id !== "welcome")
-        .map(m => ({ role: m.role, content: m.text }));
-      history.push({ role: "user", content: text.trim() });
-
-      const res  = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: history,
-          assets: assets.map(a => ({ name: a.name })),
-          account: account === "all" ? "all" : account,
-        }),
-      });
-      const data = await res.json();
-      const replyText = data.error ? `Error: ${data.error}` : (data.reply ?? "No response.");
-      setChatMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        text: replyText,
-        ts: new Date(),
-      }]);
-      // Refresh campaigns if AI may have changed statuses
-      if (/pause|resume|activ/i.test(text)) fetchCampaigns();
-    } catch {
-      setChatMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        text: "Sorry, something went wrong reaching the AI. Please try again.",
-        ts: new Date(),
-      }]);
-    } finally {
-      setChatThinking(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatMessages, assets]);
-
   // ── CAC Chat handler ─────────────────────────────────────────────────────
 
   const sendCacChat = useCallback(async (text: string) => {
@@ -939,39 +676,6 @@ export default function Home() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacChatMessages, dateRange]);
-
-  // ── Campaigns ─────────────────────────────────────────────────────────────
-
-  const fetchCampaigns = useCallback(async () => {
-    setLoadingCampaigns(true);
-    try {
-      const res  = await fetch(`/api/fb-campaigns?account=${ACCOUNT_IDS[account]}`);
-      const data = await res.json();
-      if (!data.error) setCampaigns(data.campaigns ?? []);
-    } catch { /* swallow */ } finally {
-      setLoadingCampaigns(false);
-    }
-  }, [account]);
-
-  const toggleCampaign = useCallback(async (campaignId: string, currentStatus: string) => {
-    setTogglingCampaign(campaignId);
-    const newStatus = currentStatus === "ACTIVE" ? "PAUSED" : "ACTIVE";
-    try {
-      const res  = await fetch("/api/fb-campaigns", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId, status: newStatus }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setCampaigns(prev => prev.map(c =>
-          c.id === campaignId ? { ...c, status: newStatus as Campaign["status"] } : c
-        ));
-      }
-    } catch { /* swallow */ } finally {
-      setTogglingCampaign(null);
-    }
-  }, []);
 
   // ── Assets ────────────────────────────────────────────────────────────────
 
@@ -1019,20 +723,6 @@ export default function Home() {
       });
     } catch { /* swallow */ }
   }, []);
-
-  // Load campaigns + assets when switching to Ad Management tab
-  useEffect(() => {
-    if (tab === "ads") {
-      fetchCampaigns();
-      fetchAssets();
-    }
-  }, [tab, fetchCampaigns, fetchAssets]);
-
-  // Re-fetch campaigns when account changes
-  useEffect(() => {
-    if (tab === "ads") fetchCampaigns();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account]);
 
   // Load Drive ad status when tab is active and a folder URL is saved
   useEffect(() => {
@@ -1086,11 +776,9 @@ export default function Home() {
           {/* Tab nav */}
           <nav style={{ display: "flex", gap: 2, flex: 1 }}>
             {([
-              { key: "cac",   label: "CAC Dashboard" },
-              { key: "ads",   label: "Ad Management" },
-              { key: "eddm",  label: "📮 EDDM CAC" },
-              { key: "drive",  label: "Ad Status" },
-              { key: "report", label: "📊 Ad Report" },
+              { key: "cac",  label: "CAC Dashboard" },
+              { key: "eddm", label: "📮 EDDM CAC" },
+              { key: "drive", label: "Ad Status" },
             ] as { key: Tab; label: string }[]).map(t => (
               <button key={t.key} onClick={() => {
                 setTab(t.key);
@@ -1109,22 +797,6 @@ export default function Home() {
 
           {/* Right controls */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {/* Sync status */}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.textMuted }}>
-              {syncingFb
-                ? <><Spinner size={12} /><span>Syncing…</span></>
-                : lastSynced ? <span>FB synced {relTime}</span>
-                : fbError    ? <span style={{ color: C.amber }}>⚠ FB disconnected</span>
-                : null}
-            </div>
-
-            <select value={account} onChange={e => handleAccount(e.target.value as Account)}
-              style={{ ...selectStyle, minWidth: 155 }}>
-              {(["all","florida","georgia","miami"] as Account[]).map(a => (
-                <option key={a} value={a}>{ACCOUNT_LABELS[a]}</option>
-              ))}
-            </select>
-
             <select value={dateRange} onChange={e => handleDateRange(e.target.value as DateRange)}
               style={{ ...selectStyle, minWidth: 115 }}>
               {(["today","7d","14d","30d","all"] as DateRange[]).map(r => (
@@ -1132,12 +804,12 @@ export default function Home() {
               ))}
             </select>
 
-            <button onClick={refresh} disabled={loadingData || syncingFb}
+            <button onClick={refresh} disabled={loadingData}
               style={{
                 ...selectStyle,
                 display: "flex", alignItems: "center", gap: 6,
-                opacity: loadingData || syncingFb ? 0.5 : 1,
-                cursor: loadingData || syncingFb ? "not-allowed" : "pointer",
+                opacity: loadingData ? 0.5 : 1,
+                cursor: loadingData ? "not-allowed" : "pointer",
               }}>
               {loadingData ? <Spinner size={12} /> : (
                 <svg width={12} height={12} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -1152,24 +824,6 @@ export default function Home() {
 
       <main style={{ maxWidth: 1280, margin: "0 auto", padding: "28px 24px", display: "flex", flexDirection: "column", gap: 24 }}>
 
-        {/* ── FB warning ──────────────────────────────────────────────────── */}
-        {fbError && (
-          <div style={{
-            display: "flex", alignItems: "flex-start", gap: 12,
-            background: C.amberSoft, border: `1px solid ${C.amber}30`,
-            borderRadius: 10, padding: "12px 16px",
-          }}>
-            <span style={{ color: C.amber, flexShrink: 0 }}>⚠</span>
-            <div>
-              <p style={{ fontSize: 13, fontWeight: 600, color: C.amber }}>Facebook Ads not connected</p>
-              <p style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>
-                Add <code style={{ background: C.amberSoft, padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>FACEBOOK_ACCESS_TOKEN</code> and{" "}
-                <code style={{ background: C.amberSoft, padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>FACEBOOK_AD_ACCOUNT_IDS</code> to Vercel env vars.
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* CAC DASHBOARD TAB                                                 */}
         {/* ══════════════════════════════════════════════════════════════════ */}
@@ -1179,7 +833,7 @@ export default function Home() {
             <div>
               <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>CAC Dashboard</h1>
               <p style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>
-                {DATE_RANGE_LABELS[dateRange]} · {ACCOUNT_LABELS[account]}
+                {DATE_RANGE_LABELS[dateRange]}
               </p>
             </div>
 
@@ -1201,16 +855,16 @@ export default function Home() {
               />
               <MetricCard
                 label="Ad Spend"
-                value={syncingFb && totals.spend === 0 ? "—" : totals.spend > 0 ? fmtMoney(totals.spend) : "—"}
-                sub={ACCOUNT_LABELS[account]}
-                accentColor={C.orange} accentSoft={C.orangeSoft} loading={syncingFb && totals.spend === 0}
+                value={totals.spend > 0 ? fmtMoney(totals.spend) : "—"}
+                sub="from ad_spends table"
+                accentColor={C.orange} accentSoft={C.orangeSoft} loading={loadingData}
                 icon={<svg width={17} height={17} fill="none" viewBox="0 0 24 24" stroke={C.orange} strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
               />
               <MetricCard
                 label="Avg CAC"
                 value={totals.cac ? fmtMoney(totals.cac) : "—"}
                 sub="spend ÷ sales"
-                accentColor={C.purple} accentSoft={C.purpleSoft} loading={syncingFb && totals.spend === 0}
+                accentColor={C.purple} accentSoft={C.purpleSoft} loading={loadingData}
                 icon={<svg width={17} height={17} fill="none" viewBox="0 0 24 24" stroke={C.purple} strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>}
               />
               <MetricCard
@@ -1400,428 +1054,6 @@ export default function Home() {
           </>
         )}
 
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {/* AD MANAGEMENT TAB                                                 */}
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {tab === "ads" && (
-          <>
-            {/* ── Header + inner tab bar ────────────────────────────────── */}
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Ad Management</h1>
-                <p style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>
-                  {DATE_RANGE_LABELS[dateRange]} · {ACCOUNT_LABELS[account]}
-                </p>
-              </div>
-              {/* Inner tab pills */}
-              <div style={{ display: "flex", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 3, gap: 2 }}>
-                {([
-                  { key: "chat",    label: "AI Command" },
-                  { key: "metrics", label: "Metrics" },
-                  { key: "assets",  label: "Brand Assets" },
-                ] as { key: AdTab; label: string }[]).map(t => (
-                  <button key={t.key} onClick={() => setAdTab(t.key)}
-                    style={{
-                      padding: "6px 16px", borderRadius: 7, fontSize: 13, fontWeight: 500,
-                      border: "none", cursor: "pointer", transition: "all 0.15s",
-                      background: adTab === t.key ? C.card : "transparent",
-                      color: adTab === t.key ? C.text : C.textMuted,
-                      boxShadow: adTab === t.key ? C.shadow : "none",
-                    }}>
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* ══════════════════════════════════════════════════════════ */}
-            {/* INNER TAB: AI COMMAND CHAT                               */}
-            {/* ══════════════════════════════════════════════════════════ */}
-            {adTab === "chat" && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16, alignItems: "start" }}>
-
-                {/* Chat panel */}
-                <div style={{
-                  background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
-                  boxShadow: C.shadow, display: "flex", flexDirection: "column", height: 600,
-                }}>
-                  {/* Chat header */}
-                  <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>🌿</div>
-                    <div>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Ad Command Center</p>
-                      <p style={{ fontSize: 11, color: C.green }}>● Powered by GPT-4o mini</p>
-                    </div>
-                  </div>
-
-                  {/* Messages */}
-                  <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-                    {chatMessages.map(msg => (
-                      <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
-                        {msg.role === "assistant" && (
-                          <div style={{ width: 26, height: 26, borderRadius: 8, background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0, alignSelf: "flex-end" }}>🌿</div>
-                        )}
-                        <div style={{
-                          maxWidth: "75%", padding: "10px 14px", fontSize: 13, lineHeight: 1.55,
-                          borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-                          background: msg.role === "user" ? C.blue : C.bg,
-                          color: msg.role === "user" ? "#fff" : C.text,
-                          border: msg.role === "assistant" ? `1px solid ${C.border}` : "none",
-                        }}>
-                          {msg.text.split("\n").map((line, i) => (
-                            <span key={i}>{line}{i < msg.text.split("\n").length - 1 && <br />}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    {chatThinking && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ width: 26, height: 26, borderRadius: 8, background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>🌿</div>
-                        <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: "14px 14px 14px 4px", padding: "10px 16px" }}>
-                          <Spinner size={14} color={C.textMuted} />
-                        </div>
-                      </div>
-                    )}
-                    <div ref={chatEndRef} />
-                  </div>
-
-                  {/* Quick prompts */}
-                  <div style={{ padding: "8px 14px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {["List my campaigns", "Pause all campaigns", "Which ad has the best CTR?", "Show top performer"].map(q => (
-                      <button key={q} onClick={() => sendChat(q)} disabled={chatThinking}
-                        style={{ fontSize: 11, fontWeight: 500, padding: "4px 10px", borderRadius: 20, background: C.blueSoft, color: C.blueText, border: "1px solid #bfdbfe", cursor: "pointer" }}>
-                        {q}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Input */}
-                  <div style={{ padding: "10px 14px 14px", display: "flex", gap: 8 }}>
-                    <input
-                      type="text"
-                      placeholder="Ask about your campaigns…"
-                      value={chatInput}
-                      onChange={e => setChatInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(chatInput); } }}
-                      style={{ flex: 1, padding: "9px 12px", fontSize: 13, borderRadius: 8, outline: "none", background: C.bg, border: `1px solid ${C.border}`, color: C.text }}
-                    />
-                    <button onClick={() => sendChat(chatInput)} disabled={!chatInput.trim() || chatThinking}
-                      style={{
-                        padding: "9px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none",
-                        background: chatInput.trim() && !chatThinking ? C.blue : C.border,
-                        color: chatInput.trim() && !chatThinking ? "#fff" : C.textMuted,
-                        cursor: chatInput.trim() && !chatThinking ? "pointer" : "not-allowed",
-                        transition: "all 0.15s",
-                      }}>
-                      Send
-                    </button>
-                  </div>
-                </div>
-
-                {/* Campaigns side panel */}
-                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Live Campaigns</p>
-                    <button onClick={fetchCampaigns} disabled={loadingCampaigns}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
-                      {loadingCampaigns ? <Spinner size={12} /> : (
-                        <svg width={12} height={12} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                      )}
-                      Refresh
-                    </button>
-                  </div>
-                  <div style={{ maxHeight: 548, overflowY: "auto" }}>
-                    {loadingCampaigns
-                      ? [...Array(4)].map((_, i) => (
-                          <div key={i} style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}` }}>
-                            <div className="skeleton" style={{ height: 13, width: "70%", borderRadius: 4, marginBottom: 8 }} />
-                            <div className="skeleton" style={{ height: 11, width: "40%", borderRadius: 4 }} />
-                          </div>
-                        ))
-                      : campaigns.length === 0
-                        ? (
-                          <div style={{ padding: 24, textAlign: "center" }}>
-                            <p style={{ fontSize: 13, color: C.textMuted }}>No campaigns found.</p>
-                            <p style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Check your Facebook account connection.</p>
-                          </div>
-                        )
-                        : campaigns.map(c => {
-                            const isActive  = c.status === "ACTIVE";
-                            const toggling  = togglingCampaign === c.id;
-                            const budget    = c.daily_budget
-                              ? `$${(parseInt(c.daily_budget) / 100).toFixed(2)}/day`
-                              : c.lifetime_budget
-                                ? `$${(parseInt(c.lifetime_budget) / 100).toFixed(2)} lifetime`
-                                : null;
-                            return (
-                              <div key={c.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "flex-start", gap: 10 }}>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <p style={{ fontSize: 13, fontWeight: 500, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.name}>{c.name}</p>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                                    <span style={{
-                                      fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 20,
-                                      color: isActive ? C.green : C.textMuted,
-                                      background: isActive ? C.greenSoft : C.bg,
-                                      border: `1px solid ${isActive ? C.green + "30" : C.border}`,
-                                    }}>
-                                      {c.status}
-                                    </span>
-                                    {budget && <span style={{ fontSize: 11, color: C.textMuted }}>{budget}</span>}
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={() => toggleCampaign(c.id, c.status)}
-                                  disabled={toggling}
-                                  title={isActive ? "Pause campaign" : "Resume campaign"}
-                                  style={{
-                                    flexShrink: 0, width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.border}`,
-                                    background: C.bg, cursor: toggling ? "not-allowed" : "pointer",
-                                    display: "flex", alignItems: "center", justifyContent: "center",
-                                    opacity: toggling ? 0.5 : 1, transition: "all 0.15s",
-                                  }}>
-                                  {toggling
-                                    ? <Spinner size={12} />
-                                    : isActive
-                                      ? <svg width={12} height={12} fill={C.amber} viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
-                                      : <svg width={12} height={12} fill={C.green} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21" /></svg>}
-                                </button>
-                              </div>
-                            );
-                          })}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ══════════════════════════════════════════════════════════ */}
-            {/* INNER TAB: METRICS                                        */}
-            {/* ══════════════════════════════════════════════════════════ */}
-            {adTab === "metrics" && (
-              <>
-                {/* FB Summary Pills */}
-                <section>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                    <div style={{ width: 20, height: 20, borderRadius: 5, background: "#1877f2", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <svg width={11} height={11} fill="white" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" /></svg>
-                    </div>
-                    <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Facebook Overview</h2>
-                    <span style={{ fontSize: 11, fontWeight: 500, padding: "3px 8px", borderRadius: 20, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
-                      {ACCOUNT_LABELS[account]} · {DATE_RANGE_LABELS[dateRange]}
-                    </span>
-                    {syncingFb && <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.textMuted }}><Spinner size={12} /> Fetching…</span>}
-                  </div>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <FbPill label="Impressions" value={fbMetrics ? fmtNum(fbMetrics.impressions) : "—"} loading={syncingFb && !fbMetrics} />
-                    <FbPill label="Reach"       value={fbMetrics ? fmtNum(fbMetrics.reach)       : "—"} loading={syncingFb && !fbMetrics} />
-                    <FbPill label="Clicks"      value={fbMetrics ? fmtNum(fbMetrics.clicks)      : "—"} loading={syncingFb && !fbMetrics} />
-                    <FbPill label="CTR"         value={fbMetrics ? `${fbMetrics.ctr.toFixed(2)}%`  : "—"} loading={syncingFb && !fbMetrics} />
-                    <FbPill label="CPM"         value={fbMetrics ? `$${fbMetrics.cpm.toFixed(2)}`  : "—"} loading={syncingFb && !fbMetrics} />
-                    <FbPill label="CPC"         value={fbMetrics ? `$${fbMetrics.cpc.toFixed(2)}`  : "—"} loading={syncingFb && !fbMetrics} />
-                    <FbPill label="Total Spend" value={fbMetrics ? fmtMoney(fbMetrics.spend)      : "—"} loading={syncingFb && !fbMetrics} />
-                  </div>
-                </section>
-
-                {/* Ad Performance Table */}
-                <section>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-                    <div>
-                      <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Ad Performance</h2>
-                      <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Click column headers to sort</p>
-                    </div>
-                    <select value={adFilter} onChange={e => setAdFilter(e.target.value)} style={{ ...selectStyle, maxWidth: 220 }}>
-                      <option value="all">All ads</option>
-                      {allAdNames.map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                  </div>
-                  <div style={{
-                    background: C.card, border: `1px solid ${loadingData || syncingFb ? C.blue + "30" : C.border}`,
-                    borderRadius: 14, overflow: "hidden", boxShadow: C.shadow,
-                    position: "relative", transition: "border-color 0.3s",
-                  }}>
-                    {(loadingData || syncingFb) && (
-                      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, overflow: "hidden", zIndex: 1 }}>
-                        <div style={{ position: "absolute", top: 0, bottom: 0, width: "35%", background: `linear-gradient(90deg,transparent,${C.blue}60,transparent)`, animation: "scan 1.6s ease-in-out infinite" }} />
-                      </div>
-                    )}
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-                        <thead>
-                          <tr style={{ borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
-                            {([
-                              { col: "adName", label: "Ad Name" }, { col: "spend", label: "Spend" },
-                              { col: "leads",  label: "Leads" },   { col: "sales", label: "Sales" },
-                              { col: "conv",   label: "Conv %" },  { col: "cac",   label: "CAC" },
-                            ] as { col: SortCol; label: string }[]).map(({ col, label }) => (
-                              <th key={col} style={{ ...thStyle, cursor: "pointer" }} onClick={() => handleSort(col)}>
-                                {label}<SortIcon active={sortCol === col} dir={sortDir} />
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {loadingData
-                            ? [...Array(3)].map((_, i) => <SkeletonRow key={i} cols={6} />)
-                            : adStats.length === 0
-                              ? <tr><td colSpan={6} style={{ padding: "60px 20px", textAlign: "center", fontSize: 13, color: C.textMuted }}>No ad data for this period.</td></tr>
-                              : adStats.map((row, i) => (
-                                  <tr key={row.adName}
-                                    style={{ borderBottom: i < adStats.length - 1 ? `1px solid ${C.border}` : "none", transition: "background 0.12s" }}
-                                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "#f8fafc"}
-                                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}>
-                                    <td style={{ padding: "13px 20px", fontWeight: 600, color: C.text, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.adName}>{row.adName}</td>
-                                    <td style={{ padding: "13px 20px" }}>
-                                      {syncingFb && row.spend === 0
-                                        ? <div className="skeleton" style={{ height: 14, width: 56, borderRadius: 4 }} />
-                                        : row.spend > 0
-                                          ? <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                              <span style={{ fontWeight: 600, color: C.text }}>{fmtMoney(row.spend)}</span>
-                                              {row.fromFacebook && <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", padding: "2px 5px", borderRadius: 4, color: "#1d4ed8", background: "#eff6ff", border: "1px solid #bfdbfe" }}>FB</span>}
-                                            </span>
-                                          : <span style={{ color: C.textMuted }}>—</span>}
-                                    </td>
-                                    <td style={{ padding: "13px 20px", color: C.textSec }}>{row.leads}</td>
-                                    <td style={{ padding: "13px 20px", fontWeight: 600, color: C.green }}>{row.sales}</td>
-                                    <td style={{ padding: "13px 20px", color: C.textSec }}>
-                                      {row.conv > 0 ? `${row.conv.toFixed(1)}%` : <span style={{ color: C.textMuted }}>—</span>}
-                                    </td>
-                                    <td style={{ padding: "13px 20px", fontWeight: 600, color: C.purple }}>
-                                      {row.cac > 0 ? fmtMoney(row.cac) : <span style={{ color: C.textMuted, fontWeight: 400 }}>—</span>}
-                                    </td>
-                                  </tr>
-                                ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </section>
-              </>
-            )}
-
-            {/* ══════════════════════════════════════════════════════════ */}
-            {/* INNER TAB: BRAND ASSETS                                   */}
-            {/* ══════════════════════════════════════════════════════════ */}
-            {adTab === "assets" && (
-              <section>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                  <div>
-                    <h2 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Brand Assets</h2>
-                    <p style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
-                      Logos and creatives — the AI can reference these when generating ads
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploadingAsset}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-                      background: C.blue, color: "#fff", border: "none",
-                      cursor: uploadingAsset ? "not-allowed" : "pointer",
-                      opacity: uploadingAsset ? 0.6 : 1,
-                    }}>
-                    {uploadingAsset ? <Spinner size={13} color="#fff" /> : (
-                      <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                      </svg>
-                    )}
-                    {uploadingAsset ? "Uploading…" : "Upload file"}
-                  </button>
-                  {uploadError && (
-                    <p style={{ fontSize: 12, color: "#ef4444", marginTop: 4 }}>{uploadError}</p>
-                  )}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*,video/*,.svg,.pdf"
-                    multiple
-                    style={{ display: "none" }}
-                    onChange={e => {
-                      const files = Array.from(e.target.files ?? []);
-                      if (files.length) uploadAsset(files);
-                      e.target.value = "";
-                    }}
-                  />
-                </div>
-
-                {loadingAssets
-                  ? (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
-                      {[...Array(6)].map((_, i) => (
-                        <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-                          <div className="skeleton" style={{ height: 110 }} />
-                          <div style={{ padding: "10px 12px" }}>
-                            <div className="skeleton" style={{ height: 11, width: "80%", borderRadius: 4 }} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                  : assets.length === 0
-                    ? (
-                      <div style={{
-                        background: C.card, border: `2px dashed ${C.border}`, borderRadius: 14,
-                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                        padding: "60px 24px", gap: 12,
-                      }}>
-                        <div style={{ width: 48, height: 48, borderRadius: 12, background: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <svg width={22} height={22} fill="none" viewBox="0 0 24 24" stroke={C.blue} strokeWidth={1.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                          </svg>
-                        </div>
-                        <div style={{ textAlign: "center" }}>
-                          <p style={{ fontSize: 14, fontWeight: 600, color: C.text }}>No assets yet</p>
-                          <p style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>Upload your logo, ad creatives, and brand images.</p>
-                          <p style={{ fontSize: 12, color: C.textMuted }}>The AI will use these when you ask it to generate ads.</p>
-                        </div>
-                        <button onClick={() => fileInputRef.current?.click()}
-                          style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: C.blue, color: "#fff", border: "none", cursor: "pointer" }}>
-                          Browse files
-                        </button>
-                      </div>
-                    )
-                    : (
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
-                        {assets.map(a => (
-                          <div key={a.name} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: C.shadow, position: "relative", group: true } as React.CSSProperties}>
-                            {/* Preview */}
-                            <div style={{ height: 110, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                              {a.type?.startsWith("image/")
-                                ? <img src={a.url} alt={a.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                : a.type?.startsWith("video/")
-                                  ? <video src={a.url} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline />
-                                  : (
-                                    <svg width={28} height={28} fill="none" viewBox="0 0 24 24" stroke={C.textMuted} strokeWidth={1.5}>
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                                    </svg>
-                                  )}
-                            </div>
-                            {/* Info + delete */}
-                            <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                              <div style={{ minWidth: 0 }}>
-                                <p style={{ fontSize: 11, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={a.name}>
-                                  {a.name.replace(/^\d+_/, "")}
-                                </p>
-                                <p style={{ fontSize: 10, color: C.textMuted, marginTop: 1 }}>
-                                  {a.size > 1024 * 1024 ? `${(a.size / 1024 / 1024).toFixed(1)} MB` : `${Math.round(a.size / 1024)} KB`}
-                                </p>
-                              </div>
-                              <button onClick={() => deleteAsset(a.name)} title="Delete"
-                                style={{ flexShrink: 0, background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: 2, borderRadius: 4 }}>
-                                <svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-              </section>
-            )}
-          </>
-        )}
 
         {/* ══════════════════════════════════════════════════════════════════ */}
         {/* EDDM CAC TAB                                                       */}
@@ -2628,513 +1860,10 @@ export default function Home() {
           );
         })()}
 
-        {/* ── Ad Performance Report tab ─────────────────────────────────── */}
-        {tab === "report" && (() => {
-          const PAGE_SIZE = 25;
-          const REPORT_DATE_OPTIONS: { label: string; value: string }[] = [
-            { label: "Today",        value: "today"         },
-            { label: "Last 7 Days",  value: "last_7d"       },
-            { label: "Last 14 Days", value: "last_14d"      },
-            { label: "Last 30 Days", value: "last_30_days"  },
-          ];
-
-          const ACCOUNT_LABELS_LOCAL: Record<Account, string> = {
-            all:     "All Accounts",
-            florida: "Florida",
-            georgia: "Georgia",
-            miami:   "Miami",
-          };
-          const ACCOUNT_ID_TO_LABEL: Record<string, string> = {
-            "435459903489885":  "Florida",
-            "1467364857363196": "Georgia",
-            "1320357830041204": "Miami",
-          };
-
-          const sortedFiltered = (() => {
-            const base = (fbReport ?? []).filter(ad => {
-              if (fbReportFilter === "active" && ad.effectiveStatus !== "ACTIVE") return false;
-              if (fbReportFilter === "paused" && ad.effectiveStatus === "ACTIVE") return false;
-              if (fbReportSearch && !ad.adName.toLowerCase().includes(fbReportSearch.toLowerCase())) return false;
-              return true;
-            });
-            return [...base].sort((a, b) => {
-              let diff = 0;
-              if      (fbReportSortCol === "adName")      diff = a.adName.localeCompare(b.adName);
-              else if (fbReportSortCol === "spend")       diff = a.spend       - b.spend;
-              else if (fbReportSortCol === "reach")       diff = a.reach       - b.reach;
-              else if (fbReportSortCol === "cpm")         diff = a.cpm         - b.cpm;
-              else if (fbReportSortCol === "ctr")         diff = a.ctr         - b.ctr;
-              else if (fbReportSortCol === "impressions")   diff = a.impressions    - b.impressions;
-              else if (fbReportSortCol === "clicks")        diff = a.clicks         - b.clicks;
-              else if (fbReportSortCol === "results")       diff = a.results        - b.results;
-              else if (fbReportSortCol === "costPerResult") diff = a.costPerResult  - b.costPerResult;
-              return fbReportSortDir === "asc" ? diff : -diff;
-            });
-          })();
-
-          const totalPages  = Math.max(1, Math.ceil(sortedFiltered.length / PAGE_SIZE));
-          const safePage    = Math.min(fbReportPage, totalPages);
-          const pageRows    = sortedFiltered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-
-          function handleSort(col: typeof fbReportSortCol) {
-            if (fbReportSortCol === col) setFbReportSortDir(d => d === "asc" ? "desc" : "asc");
-            else { setFbReportSortCol(col); setFbReportSortDir("desc"); }
-            setFbReportPage(1);
-          }
-
-          function downloadCsv() {
-            if (!fbReport || fbReport.length === 0) return;
-            const header = "Ad Name,Status,Results,Cost Per Result ($),Spend ($),Reach,CPM ($),CTR (%),Impressions,Clicks,Account";
-            const allRows = [...fbReport].sort((a, b) => b.spend - a.spend);
-            const rows = allRows.map(a => [
-              `"${a.adName.replace(/"/g, '""')}"`,
-              a.effectiveStatus,
-              a.results,
-              a.costPerResult > 0 ? a.costPerResult.toFixed(2) : "",
-              a.spend.toFixed(2),
-              a.reach,
-              a.cpm.toFixed(2),
-              a.ctr.toFixed(2),
-              a.impressions,
-              a.clicks,
-              ACCOUNT_ID_TO_LABEL[a.accountId] ?? a.accountId,
-            ].join(","));
-            const csv  = [header, ...rows].join("\n");
-            const blob = new Blob([csv], { type: "text/csv" });
-            const url  = URL.createObjectURL(blob);
-            const a    = document.createElement("a");
-            a.href = url;
-            a.download = `ad-report-${new Date().toISOString().split("T")[0]}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
-          }
-
-          function downloadImage(thumbnailUrl: string, adName: string) {
-            const proxyUrl = `/api/fb-image?url=${encodeURIComponent(thumbnailUrl)}`;
-            const a = document.createElement("a");
-            a.href = proxyUrl;
-            a.download = `${adName.slice(0, 60).replace(/[^a-z0-9]/gi, "-")}.jpg`;
-            a.click();
-          }
-
-          function printReport() {
-            if (!sortedFiltered.length) return;
-            const dateLabel = fbReportSince && fbReportUntil
-              ? `${fbReportSince} → ${fbReportUntil}`
-              : REPORT_DATE_OPTIONS.find(o => o.value === fbReportDatePreset)?.label ?? fbReportDatePreset;
-            const acctLabel = ACCOUNT_LABELS_LOCAL[fbReportAccount];
-            const rows = sortedFiltered.map((ad, i) => {
-              const isActive = ad.effectiveStatus === "ACTIVE";
-              return `<tr>
-                <td>${i + 1}</td>
-                ${fbReportAccount === "all" ? `<td>${ACCOUNT_ID_TO_LABEL[ad.accountId] ?? "—"}</td>` : ""}
-                <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ad.adName}</td>
-                <td><span style="color:${isActive ? "#16a34a" : "#475569"};font-weight:600">${isActive ? "● Active" : "○ Paused"}</span></td>
-                <td class="n">${ad.results > 0 ? ad.results : "—"}</td>
-                <td class="n">${ad.costPerResult > 0 ? "$" + ad.costPerResult.toFixed(2) : "—"}</td>
-                <td class="n" style="color:#16a34a;font-weight:700">$${ad.spend.toFixed(2)}</td>
-                <td class="n">${ad.reach.toLocaleString()}</td>
-                <td class="n">$${ad.cpm.toFixed(2)}</td>
-                <td class="n">${ad.ctr.toFixed(2)}%</td>
-                <td class="n">${ad.impressions.toLocaleString()}</td>
-                <td class="n">${ad.clicks.toLocaleString()}</td>
-                <td>${ad.thumbnailUrl ? `<img src="${ad.thumbnailUrl}" style="width:70px;height:40px;object-fit:cover;border-radius:4px;display:block" />` : "—"}</td>
-              </tr>`;
-            }).join("");
-
-            const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>Ad Performance Report</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;color:#0f172a;padding:24px}
-  h1{font-size:20px;font-weight:700;margin-bottom:4px}
-  .sub{color:#64748b;font-size:11px;margin-bottom:18px}
-  table{width:100%;border-collapse:collapse;font-size:11px}
-  thead th{background:#f1f5f9;padding:7px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #e2e8f0;white-space:nowrap}
-  td{padding:7px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
-  tr:nth-child(even){background:#fafbfc}
-  .n{text-align:right}
-  @media print{body{padding:0}@page{margin:14mm}}
-</style></head><body>
-<h1>Ad Performance Report</h1>
-<p class="sub">${acctLabel} · ${dateLabel} · ${sortedFiltered.length} ads · Generated ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
-<table>
-<thead><tr>
-  <th>#</th>${fbReportAccount === "all" ? "<th>Acct</th>" : ""}
-  <th>Ad Name</th><th>Status</th>
-  <th class="n">Results</th><th class="n">Cost/Result</th>
-  <th class="n">Spent</th><th class="n">Reach</th>
-  <th class="n">CPM</th><th class="n">CTR</th>
-  <th class="n">Impr.</th><th class="n">Clicks</th>
-  <th>Preview</th>
-</tr></thead>
-<tbody>${rows}</tbody>
-</table>
-</body></html>`;
-            const win = window.open("", "_blank");
-            if (!win) { alert("Pop-up blocked — please allow pop-ups for this site."); return; }
-            win.document.write(html);
-            win.document.close();
-            setTimeout(() => { win.focus(); win.print(); }, 600);
-          }
-
-          const statusBadge = (effectiveStatus: string) => {
-            const isActive   = effectiveStatus === "ACTIVE";
-            const isPaused   = ["PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"].includes(effectiveStatus);
-            const bg    = isActive ? "#dcfce7" : isPaused ? "#f1f5f9" : "#fef2f2";
-            const color = isActive ? "#15803d" : isPaused ? "#475569" : "#dc2626";
-            const dot   = isActive ? "#16a34a" : isPaused ? "#94a3b8" : "#dc2626";
-            const label = isActive ? "Active" : isPaused ? "Paused" : effectiveStatus.replace(/_/g, " ");
-            return (
-              <span style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                background: bg, color, borderRadius: 20,
-                padding: "3px 10px", fontSize: 11, fontWeight: 600,
-              }}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, flexShrink: 0 }} />
-                {label}
-              </span>
-            );
-          };
-
-          const thStyle: React.CSSProperties = {
-            padding: "10px 14px", fontSize: 11, fontWeight: 700,
-            letterSpacing: "0.06em", textTransform: "uppercase",
-            color: C.textMuted, background: "#f8fafc",
-            borderBottom: `1px solid ${C.border}`,
-            whiteSpace: "nowrap", userSelect: "none",
-          };
-          const tdStyle: React.CSSProperties = {
-            padding: "11px 14px", fontSize: 13, color: C.text,
-            borderBottom: `1px solid ${C.border}`, verticalAlign: "middle",
-          };
-
-          return (
-            <>
-              {/* Header */}
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-                <div>
-                  <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Ad Performance Report</h1>
-                  <p style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>Live data from Facebook — active & inactive ads with spend, reach, CPM and CTR.</p>
-                </div>
-                {fbReport && fbReport.length > 0 && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={downloadCsv}
-                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: C.green, color: "#fff", border: "none", cursor: "pointer", boxShadow: C.shadow }}>
-                      <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                      CSV
-                    </button>
-                    <button onClick={printReport} disabled={!sortedFiltered.length}
-                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: C.card, border: `1px solid ${C.border}`, color: C.text, cursor: "pointer", boxShadow: C.shadow, opacity: sortedFiltered.length ? 1 : 0.4 }}>
-                      <svg width={13} height={13} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
-                      PDF / Print
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Controls card */}
-              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", boxShadow: C.shadow }}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 20, alignItems: "flex-end" }}>
-                  {/* Account selector */}
-                  <div style={{ flex: 1, minWidth: 200 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 8 }}>Ad Account</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {(["all", "florida", "georgia"] as Account[]).map(acct => (
-                        <button
-                          key={acct}
-                          onClick={() => setFbReportAccount(acct)}
-                          style={{
-                            padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                            border: `1px solid ${fbReportAccount === acct ? C.blue : C.border}`,
-                            background: fbReportAccount === acct ? C.blueSoft : C.card,
-                            color: fbReportAccount === acct ? C.blueText : C.textSec,
-                            cursor: "pointer", transition: "all 0.15s",
-                          }}>
-                          {ACCOUNT_LABELS_LOCAL[acct]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Date range */}
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 8 }}>Period</div>
-                    <select
-                      value={fbReportSince && fbReportUntil ? "" : fbReportDatePreset}
-                      onChange={e => { setFbReportDatePreset(e.target.value); setFbReportSince(""); setFbReportUntil(""); }}
-                      style={{ ...selectStyle, padding: "7px 14px", opacity: fbReportSince && fbReportUntil ? 0.4 : 1 }}>
-                      {fbReportSince && fbReportUntil && <option value="">Custom range</option>}
-                      {REPORT_DATE_OPTIONS.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Custom date range */}
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted, marginBottom: 8 }}>Custom range</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <input
-                        type="date"
-                        value={fbReportSince}
-                        onChange={e => setFbReportSince(e.target.value)}
-                        style={{ ...selectStyle, padding: "7px 10px", fontSize: 13 }}
-                      />
-                      <span style={{ color: C.textMuted, fontSize: 13 }}>→</span>
-                      <input
-                        type="date"
-                        value={fbReportUntil}
-                        onChange={e => setFbReportUntil(e.target.value)}
-                        style={{ ...selectStyle, padding: "7px 10px", fontSize: 13 }}
-                      />
-                      {(fbReportSince || fbReportUntil) && (
-                        <button
-                          onClick={() => { setFbReportSince(""); setFbReportUntil(""); }}
-                          style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: 16, padding: "0 4px", lineHeight: 1 }}
-                          title="Clear dates">×</button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Fetch button */}
-                  <button
-                    disabled={fbReportLoading}
-                    onClick={() => fetchFbReport(fbReportAccount, fbReportDatePreset, fbReportSince || undefined, fbReportUntil || undefined)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      padding: "9px 22px", borderRadius: 9, fontSize: 13, fontWeight: 700,
-                      background: fbReportLoading ? C.blueSoft : C.blue,
-                      color: fbReportLoading ? C.blueText : "#fff",
-                      border: "none", cursor: fbReportLoading ? "not-allowed" : "pointer",
-                      boxShadow: fbReportLoading ? "none" : "0 2px 8px rgba(37,99,235,0.25)",
-                      transition: "all 0.15s",
-                    }}>
-                    {fbReportLoading
-                      ? <><Spinner size={14} color={C.blue} /> Fetching…</>
-                      : <><svg width={14} height={14} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg> Fetch Report</>}
-                  </button>
-                </div>
-              </div>
-
-              {/* Error */}
-              {fbReportError && (
-                <div style={{ background: C.redSoft, border: `1px solid ${C.red}30`, borderRadius: 10, padding: "12px 16px", color: C.red, fontSize: 13 }}>
-                  {fbReportError}
-                </div>
-              )}
-
-              {/* Summary cards */}
-              {fbReportSummary && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-                  {[
-                    { label: "Total Ads",      value: fbReportSummary.total.toString(),                                                        color: C.blue,   soft: C.blueSoft,   icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.blue}   strokeWidth={2}><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg> },
-                    { label: "Active",         value: fbReportSummary.active.toString(),                                                                 color: C.green,  soft: C.greenSoft,  icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.green}  strokeWidth={2}><circle cx="12" cy="12" r="9"/><path strokeLinecap="round" d="M8 12l2.5 2.5L16 9"/></svg> },
-                    { label: "Total Spend",    value: fmtMoney(fbReportSummary.totalSpend),                                                             color: C.orange, soft: C.orangeSoft, icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.orange} strokeWidth={2}><path strokeLinecap="round" d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg> },
-                    { label: "Results",        value: fbReportSummary.totalResults.toString(),                                                          color: C.purple, soft: C.purpleSoft, icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.purple} strokeWidth={2}><path strokeLinecap="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> },
-                    { label: "Cost / Result",  value: fbReportSummary.costPerResult > 0 ? `$${fbReportSummary.costPerResult.toFixed(2)}` : "—",         color: C.cyan,   soft: C.cyanSoft,   icon: <svg width={18} height={18} fill="none" viewBox="0 0 24 24" stroke={C.cyan}   strokeWidth={2}><path strokeLinecap="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg> },
-                  ].map(({ label, value, color, soft, icon }) => (
-                    <div key={label} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px", boxShadow: C.shadow, display: "flex", alignItems: "center", gap: 12 }}>
-                      <div style={{ width: 36, height: 36, borderRadius: 9, background: soft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {icon}
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.textMuted }}>{label}</div>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: C.text, lineHeight: 1.2 }}>{value}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Empty state */}
-              {!fbReport && !fbReportLoading && !fbReportError && (
-                <div style={{ textAlign: "center", padding: "60px 20px", color: C.textMuted }}>
-                  <div style={{ fontSize: 40, marginBottom: 12 }}>📊</div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>No report yet</div>
-                  <div style={{ fontSize: 13 }}>Select an account and click <strong>Fetch Report</strong> to pull live data.</div>
-                </div>
-              )}
-
-              {/* Table */}
-              {(fbReportLoading || (fbReport && fbReport.length >= 0)) && (
-                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: C.shadow, overflow: "hidden" }}>
-                  {/* Table toolbar */}
-                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, padding: "14px 16px", borderBottom: `1px solid ${C.border}` }}>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      {(["all", "active", "paused"] as const).map(f => (
-                        <button key={f} onClick={() => { setFbReportFilter(f); setFbReportPage(1); }}
-                          style={{ padding: "5px 13px", borderRadius: 6, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", transition: "all 0.12s",
-                            background: fbReportFilter === f ? C.text : C.bg,
-                            color:      fbReportFilter === f ? "#fff" : C.textSec,
-                          }}>
-                          {f === "all" ? `All (${fbReport?.length ?? 0})` : f === "active" ? `Active (${fbReportSummary?.active ?? 0})` : `Paused (${fbReportSummary?.inactive ?? 0})`}
-                        </button>
-                      ))}
-                    </div>
-                    <input type="text" placeholder="Search ad name…" value={fbReportSearch}
-                      onChange={e => { setFbReportSearch(e.target.value); setFbReportPage(1); }}
-                      style={{ ...selectStyle, flex: 1, minWidth: 160, padding: "6px 11px" }} />
-                    {!fbReportLoading && fbReport && (
-                      <span style={{ fontSize: 12, color: C.textMuted, whiteSpace: "nowrap" }}>
-                        {sortedFiltered.length} ad{sortedFiltered.length !== 1 ? "s" : ""}
-                        {sortedFiltered.length !== fbReport.length ? ` of ${fbReport.length}` : ""}
-                      </span>
-                    )}
-                  </div>
-
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                      <thead>
-                        <tr>
-                          <th style={{ ...thStyle, width: 36, textAlign: "center" }}>#</th>
-                          {fbReportAccount === "all" && <th style={{ ...thStyle, width: 70 }}>Acct</th>}
-                          <th style={{ ...thStyle, minWidth: 220, cursor: "pointer" }} onClick={() => handleSort("adName")}>
-                            Ad Name {fbReportSortCol === "adName" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 110 }}>Status</th>
-                          <th style={{ ...thStyle, width: 85, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("results")}>
-                            Results {fbReportSortCol === "results" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 105, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("costPerResult")}>
-                            Cost/Result {fbReportSortCol === "costPerResult" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 100, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("spend")}>
-                            Spent {fbReportSortCol === "spend" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 95, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("reach")}>
-                            Reach {fbReportSortCol === "reach" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 85, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("cpm")}>
-                            CPM {fbReportSortCol === "cpm" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 75, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("ctr")}>
-                            CTR {fbReportSortCol === "ctr" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 90, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("impressions")}>
-                            Impr. {fbReportSortCol === "impressions" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 80, textAlign: "right", cursor: "pointer" }} onClick={() => handleSort("clicks")}>
-                            Clicks {fbReportSortCol === "clicks" ? (fbReportSortDir === "asc" ? "↑" : "↓") : <span style={{ opacity: 0.3 }}>↕</span>}
-                          </th>
-                          <th style={{ ...thStyle, width: 80, textAlign: "center" }}>Preview</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {fbReportLoading && [...Array(10)].map((_, i) => (
-                          <tr key={i}>
-                            {[...Array(fbReportAccount === "all" ? 10 : 9)].map((__, j) => (
-                              <td key={j} style={tdStyle}>
-                                <div className="skeleton" style={{ height: 12, borderRadius: 4, width: `${50 + (j * 13) % 40}%` }} />
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                        {!fbReportLoading && sortedFiltered.length === 0 && (
-                          <tr>
-                            <td colSpan={fbReportAccount === "all" ? 10 : 9} style={{ ...tdStyle, textAlign: "center", color: C.textMuted, padding: "40px 20px" }}>
-                              {fbReport && fbReport.length > 0 ? "No ads match your filter." : "No ad data for this period."}
-                            </td>
-                          </tr>
-                        )}
-                        {!fbReportLoading && pageRows.map((ad, idx) => {
-                          const rowNum = (safePage - 1) * PAGE_SIZE + idx + 1;
-                          const isActive = ad.effectiveStatus === "ACTIVE";
-                          const isPaused = ["PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"].includes(ad.effectiveStatus);
-                          return (
-                            <tr key={ad.adId} style={{ background: idx % 2 === 0 ? "#fff" : "#fafbfc" }}
-                              onMouseEnter={e => (e.currentTarget.style.background = C.blueSoft)}
-                              onMouseLeave={e => (e.currentTarget.style.background = idx % 2 === 0 ? "#fff" : "#fafbfc")}>
-                              <td style={{ ...tdStyle, textAlign: "center", color: C.textMuted, fontSize: 11, fontWeight: 500 }}>{rowNum}</td>
-                              {fbReportAccount === "all" && (
-                                <td style={tdStyle}>
-                                  <span style={{ background: C.blueSoft, color: C.blueText, borderRadius: 5, padding: "2px 7px", fontSize: 10, fontWeight: 700 }}>
-                                    {ACCOUNT_ID_TO_LABEL[ad.accountId] ?? "—"}
-                                  </span>
-                                </td>
-                              )}
-                              <td style={{ ...tdStyle, fontWeight: 500, maxWidth: 280 }}>
-                                <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ad.adName}>
-                                  {ad.adName}
-                                </div>
-                              </td>
-                              <td style={tdStyle}>
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 5,
-                                  background: isActive ? C.greenSoft : isPaused ? "#f1f5f9" : C.redSoft,
-                                  color: isActive ? C.green : isPaused ? C.textSec : C.red,
-                                  borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 600 }}>
-                                  <span style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                                    background: isActive ? C.green : isPaused ? "#94a3b8" : C.red }} />
-                                  {isActive ? "Active" : isPaused ? "Paused" : ad.effectiveStatus.replace(/_/g, " ")}
-                                </span>
-                              </td>
-                              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: ad.results > 0 ? C.purple : C.textMuted }}>
-                                {ad.results > 0 ? ad.results : "—"}
-                              </td>
-                              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: ad.costPerResult > 0 ? C.cyan : C.textMuted }}>
-                                {ad.costPerResult > 0 ? `$${ad.costPerResult.toFixed(2)}` : "—"}
-                              </td>
-                              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: ad.spend > 0 ? C.green : C.textMuted }}>
-                                ${ad.spend.toFixed(2)}
-                              </td>
-                              <td style={{ ...tdStyle, textAlign: "right" }}>{fmtNum(ad.reach)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", color: C.purple, fontWeight: 600 }}>${ad.cpm.toFixed(2)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", color: ad.ctr > 1.5 ? C.blue : C.text }}>{ad.ctr.toFixed(2)}%</td>
-                              <td style={{ ...tdStyle, textAlign: "right" }}>{fmtNum(ad.impressions)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right" }}>{fmtNum(ad.clicks)}</td>
-                              <td style={{ ...tdStyle, textAlign: "center" }}>
-                                {ad.thumbnailUrl ? (
-                                  <a href={ad.thumbnailUrl} target="_blank" rel="noopener noreferrer"
-                                    style={{ display: "inline-block", width: 52, height: 30, borderRadius: 5, overflow: "hidden", border: `1px solid ${C.border}`, verticalAlign: "middle" }}>
-                                    <img src={ad.thumbnailUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                                      onError={e => { (e.target as HTMLImageElement).parentElement!.innerHTML = '<span style="font-size:10px;color:#94a3b8">—</span>'; }} />
-                                  </a>
-                                ) : <span style={{ color: C.textMuted, fontSize: 11 }}>—</span>}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Pagination footer */}
-                  {!fbReportLoading && totalPages > 1 && (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: `1px solid ${C.border}`, background: "#f8fafc" }}>
-                      <span style={{ fontSize: 12, color: C.textMuted }}>
-                        Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, sortedFiltered.length)} of {sortedFiltered.length}
-                      </span>
-                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                        <button onClick={() => setFbReportPage(p => Math.max(1, p - 1))} disabled={safePage === 1}
-                          style={{ padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, border: `1px solid ${C.border}`, background: C.card, color: safePage === 1 ? C.textMuted : C.text, cursor: safePage === 1 ? "not-allowed" : "pointer" }}>← Prev</button>
-                        {[...Array(Math.min(totalPages, 7))].map((_, i) => {
-                          const page = totalPages <= 7 ? i + 1
-                            : safePage <= 4 ? i + 1
-                            : safePage >= totalPages - 3 ? totalPages - 6 + i
-                            : safePage - 3 + i;
-                          return (
-                            <button key={page} onClick={() => setFbReportPage(page)}
-                              style={{ padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, border: `1px solid ${page === safePage ? C.blue : C.border}`,
-                                background: page === safePage ? C.blue : C.card,
-                                color:      page === safePage ? "#fff"  : C.text, cursor: "pointer" }}>
-                              {page}
-                            </button>
-                          );
-                        })}
-                        <button onClick={() => setFbReportPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}
-                          style={{ padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, border: `1px solid ${C.border}`, background: C.card, color: safePage === totalPages ? C.textMuted : C.text, cursor: safePage === totalPages ? "not-allowed" : "pointer" }}>Next →</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          );
-        })()}
 
         {/* Footer */}
         <footer style={{ textAlign: "center", fontSize: 11, color: C.textMuted, paddingBottom: 8 }}>
-          Leads from GoHighLevel · Sales via Slack · Spend & metrics from Facebook Ads Manager
+          Leads from GoHighLevel · Sales via Slack
         </footer>
       </main>
 

@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { supabase } from "../../lib/supabase";
 import { extractSoldEmail } from "../../lib/extractSoldEmail";
-import { sendSoldConversion } from "../../lib/metaCapi";
-import { AD_ACCOUNTS } from "../../lib/adAccounts";
 
 
 async function handleSoldMessage(text: string) {
@@ -24,13 +22,6 @@ async function handleSoldMessage(text: string) {
     return;
   }
 
-  // Look up lead to get phone + source for pixel routing
-  const { data: lead } = await supabase
-    .from("leads")
-    .select("phone, ad_name, source")
-    .eq("email", email)
-    .maybeSingle() as { data: { phone?: string; ad_name?: string; source?: string } | null };
-
   const { error } = await supabase
     .from("sales")
     .insert([{ email, status: "sold" }]);
@@ -40,20 +31,7 @@ async function handleSoldMessage(text: string) {
     return;
   }
 
-  console.log("[Slack] sale recorded:", email, "| source:", lead?.source);
-
-  // Route Purchase event to the correct pixel based on lead source
-  const source  = lead?.source ?? "";
-  const acct    = source === "FBGA"    ? AD_ACCOUNTS.georgia
-                : source === "FBMIAMI" ? AD_ACCOUNTS.miami
-                : AD_ACCOUNTS.florida; // default to FL for FBFL + unknown
-
-  await sendSoldConversion({
-    pixelId: acct.pixelId,
-    email,
-    phone:   lead?.phone,
-    value:   99,
-  });
+  console.log("[Slack] sale recorded:", email);
 }
 
 export async function POST(req: Request) {
