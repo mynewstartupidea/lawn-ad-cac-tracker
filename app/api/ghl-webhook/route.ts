@@ -151,16 +151,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Valid email required" }, { status: 400 });
     }
 
-    // Check for a same-day record for this email.
-    // GHL fires the webhook twice for the same contact: once on creation (no tags, source=ghl)
-    // and again when the workflow assigns the FB tag (full name, source=FBFL/GA/MIAMI).
-    // If a same-day record exists with a weaker source, update it instead of inserting a duplicate.
-    const todayUtc = new Date(); todayUtc.setUTCHours(0, 0, 0, 0);
+    // Check for a recent record for this email (within last 2 hours).
+    // GHL fires the webhook twice per contact within seconds — using a rolling 2h window
+    // is more reliable than a calendar-day cutoff which breaks around UTC midnight.
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
     const { data: todayRecord } = await supabase
       .from("leads")
       .select("id, source")
       .eq("email", email)
-      .gte("created_at", todayUtc.toISOString())
+      .gte("created_at", twoHoursAgo.toISOString())
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle() as { data: { id: string; source: string } | null };
@@ -200,7 +199,7 @@ export async function POST(req: Request) {
       .from("leads")
       .select("id")
       .eq("email", email)
-      .lt("created_at", todayUtc.toISOString())
+      .lt("created_at", twoHoursAgo.toISOString())
       .limit(1)
       .maybeSingle();
     const isFirstEver = !existingForCapi && !existingIsWeak;
