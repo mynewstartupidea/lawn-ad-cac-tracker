@@ -1905,10 +1905,17 @@ export default function Home() {
               fd.append("ghlFile",     attrGhlFile!);
               fd.append("clientsFile", attrClientsFile!);
               const res  = await fetch("/api/ad-attribution", { method: "POST", body: fd });
-              const data = await res.json() as AttrResponse;
-              if (!res.ok || data.error) { setAttrError(data.error ?? "Something went wrong."); return; }
+              let data: AttrResponse;
+              try {
+                data = await res.json() as AttrResponse;
+              } catch {
+                const text = await res.text().catch(() => "");
+                setAttrError(`Server error (${res.status}): ${text.slice(0, 200) || "no response body"}`);
+                return;
+              }
+              if (!res.ok || data.error) { setAttrError(data.error ?? `Server error ${res.status}`); return; }
               setAttrResult(data);
-            } catch { setAttrError("Network error. Check your connection and try again."); }
+            } catch (err) { setAttrError(`Request failed: ${err instanceof Error ? err.message : String(err)}`); }
             finally  { setAttrLoading(false); }
           }
 
