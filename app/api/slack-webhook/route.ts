@@ -10,21 +10,12 @@ async function handleSoldMessage(text: string) {
 
   console.log("[Slack] sold message detected, email:", email);
 
-  // Deduplicate — don't insert if sale already recorded
-  const { data: existing } = await supabase
-    .from("sales")
-    .select("id")
-    .eq("email", email)
-    .maybeSingle();
-
-  if (existing) {
-    console.log("[Slack] sale already exists:", email);
-    return;
-  }
-
+  // Upsert with ignoreDuplicates prevents the TOCTOU race where two simultaneous
+  // Slack events (message + message_changed) both pass a select-then-insert check.
+  // Requires UNIQUE constraint on sales.email (see sql/add_sales_email_unique.sql).
   const { error } = await supabase
     .from("sales")
-    .insert([{ email, status: "sold" }]);
+    .upsert([{ email, status: "sold" }], { onConflict: "email", ignoreDuplicates: true });
 
   if (error) {
     console.error("[Slack] insert error for", email, error);

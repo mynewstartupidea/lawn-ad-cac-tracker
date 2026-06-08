@@ -1,6 +1,7 @@
-// Email regex — matches standard email addresses
-// \b at the end stops the TLD from greedily eating adjacent text (e.g. .comJohnSmith)
-const EMAIL_RE = /[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}\b/;
+// Email regex — matches standard email addresses.
+// TLD is capped at 6 chars with a negative lookahead (?![a-zA-Z]) so the engine
+// can't greedily extend into a name concatenated with no space (e.g. "sold email@host.comJohnSmith").
+const EMAIL_RE = /[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,6}(?![a-zA-Z])/;
 
 // Extracts an email from any message where "sold" appears at/near the start
 // (case-insensitive), regardless of leading punctuation, spacing, or formatting.

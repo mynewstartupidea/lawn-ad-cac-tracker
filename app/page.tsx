@@ -48,7 +48,7 @@ type LeadFilter = "all" | "open" | "sold";
 type DateRange  = "today" | "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
-type Tab        = "cac" | "eddm" | "drive";
+type Tab        = "cac" | "eddm" | "drive" | "attribution";
 
 interface DriveFile {
   id: string;
@@ -264,6 +264,26 @@ interface EddmResponse {
   totalCalls: number;
   totalMatched: number;
   saClientsRead: number;
+  error?: string;
+}
+
+// ─── Ad Attribution Types ─────────────────────────────────────────────────────
+
+interface AttrAdResult {
+  adName: string;
+  sales: number;
+  emailMatches: number;
+  phoneMatches: number;
+}
+
+interface AttrResponse {
+  results: AttrAdResult[];
+  totalLeads: number;
+  totalClients: number;
+  totalSales: number;
+  emailMatchCount: number;
+  phoneMatchCount: number;
+  unmatched: number;
   error?: string;
 }
 
@@ -488,6 +508,13 @@ export default function Home() {
   } | null>(null);
   const eddmChatEndRef = useRef<HTMLDivElement>(null);
   const eddmImgInputRef = useRef<HTMLInputElement>(null);
+
+  // Ad Attribution state
+  const [attrGhlFile,     setAttrGhlFile]     = useState<File | null>(null);
+  const [attrClientsFile, setAttrClientsFile] = useState<File | null>(null);
+  const [attrLoading,     setAttrLoading]     = useState(false);
+  const [attrError,       setAttrError]       = useState<string | null>(null);
+  const [attrResult,      setAttrResult]      = useState<AttrResponse | null>(null);
 
   // Drive Ad Status state
   const [driveMatches,   setDriveMatches]   = useState<DriveAdMatch[] | null>(null);
@@ -779,6 +806,7 @@ export default function Home() {
               { key: "cac",  label: "CAC Dashboard" },
               { key: "eddm", label: "📮 EDDM CAC" },
               { key: "drive", label: "Ad Status" },
+              { key: "attribution", label: "Ad Attribution" },
             ] as { key: Tab; label: string }[]).map(t => (
               <button key={t.key} onClick={() => {
                 setTab(t.key);
@@ -1860,6 +1888,190 @@ export default function Home() {
           );
         })()}
 
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* AD ATTRIBUTION TAB                                               */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {tab === "attribution" && (() => {
+          const canAnalyze = !!attrGhlFile && !!attrClientsFile && !attrLoading;
+
+          async function handleAnalyze() {
+            if (!canAnalyze) return;
+            setAttrLoading(true);
+            setAttrError(null);
+            setAttrResult(null);
+            try {
+              const fd = new FormData();
+              fd.append("ghlFile",     attrGhlFile!);
+              fd.append("clientsFile", attrClientsFile!);
+              const res  = await fetch("/api/ad-attribution", { method: "POST", body: fd });
+              const data = await res.json() as AttrResponse;
+              if (!res.ok || data.error) { setAttrError(data.error ?? "Something went wrong."); return; }
+              setAttrResult(data);
+            } catch { setAttrError("Network error. Check your connection and try again."); }
+            finally  { setAttrLoading(false); }
+          }
+
+          const totalSales = attrResult?.totalSales ?? 0;
+
+          return (
+            <>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Ad Attribution</h1>
+                  <p style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>
+                    Upload your GHL leads export + client list to see which ads drove the most sales
+                  </p>
+                </div>
+                {attrResult && (
+                  <button
+                    onClick={() => { setAttrResult(null); setAttrGhlFile(null); setAttrClientsFile(null); setAttrError(null); }}
+                    style={{ fontSize: 12, fontWeight: 600, color: C.textSec, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}
+                  >↩ Start Over</button>
+                )}
+              </div>
+
+              {/* Upload zone */}
+              {!attrResult && (
+                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, boxShadow: C.shadow }}>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
+                    <EddmUploadCard
+                      label="GHL Leads Export"
+                      sublabel="Export from GoHighLevel → Contacts → Export CSV"
+                      hint="Needs: Email, Phone, and your Ad Name / Source column"
+                      icon="📋"
+                      file={attrGhlFile}
+                      onFile={setAttrGhlFile}
+                      onClear={() => setAttrGhlFile(null)}
+                      accent={C.blue}
+                      accentSoft={C.blueSoft}
+                      required
+                    />
+                    <EddmUploadCard
+                      label="Clients / Customers File"
+                      sublabel="Export from your billing or field-service software"
+                      hint="Needs: Email and/or Phone columns"
+                      icon="👥"
+                      file={attrClientsFile}
+                      onFile={setAttrClientsFile}
+                      onClear={() => setAttrClientsFile(null)}
+                      accent={C.green}
+                      accentSoft={C.greenSoft}
+                      required
+                    />
+                  </div>
+
+                  {attrError && (
+                    <div style={{ background: C.redSoft, border: `1px solid ${C.red}40`, borderRadius: 10, padding: "11px 14px", fontSize: 13, color: C.red, marginBottom: 16 }}>
+                      {attrError}
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button
+                      onClick={handleAnalyze}
+                      disabled={!canAnalyze}
+                      style={{
+                        padding: "10px 24px", borderRadius: 10, fontSize: 14, fontWeight: 600,
+                        background: canAnalyze ? "linear-gradient(135deg,#16a34a,#15803d)" : C.border,
+                        color: canAnalyze ? "#fff" : C.textMuted,
+                        border: "none", cursor: canAnalyze ? "pointer" : "not-allowed",
+                        display: "flex", alignItems: "center", gap: 8,
+                      }}
+                    >
+                      {attrLoading ? <><Spinner size={14} color="#fff" /> Analyzing…</> : "Analyze →"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Results */}
+              {attrResult && (
+                <>
+                  {/* Summary cards */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
+                    {[
+                      { label: "Total Sales Matched", value: String(attrResult.totalSales), icon: "🏆", color: C.green, soft: C.greenSoft },
+                      { label: "Matched by Email",    value: String(attrResult.emailMatchCount), icon: "📧", color: C.blue,  soft: C.blueSoft },
+                      { label: "Matched by Phone",    value: String(attrResult.phoneMatchCount), icon: "📞", color: C.purple, soft: C.purpleSoft },
+                      { label: "Unmatched Clients",   value: String(attrResult.unmatched), icon: "❓", color: C.amber, soft: C.amberSoft },
+                    ].map(c => (
+                      <div key={c.label} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "16px 18px", boxShadow: C.shadow }}>
+                        <div style={{ width: 34, height: 34, borderRadius: 9, background: c.soft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, marginBottom: 10 }}>{c.icon}</div>
+                        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMuted, marginBottom: 4 }}>{c.label}</p>
+                        <p style={{ fontSize: 26, fontWeight: 700, color: C.text, lineHeight: 1, letterSpacing: "-0.02em" }}>{c.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Results table */}
+                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden", boxShadow: C.shadow }}>
+                    <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <p style={{ fontSize: 14, fontWeight: 600, color: C.text }}>
+                        Sales by Ad — {attrResult.results.length} ads matched
+                      </p>
+                      <p style={{ fontSize: 12, color: C.textMuted }}>
+                        {attrResult.totalLeads.toLocaleString()} GHL leads · {attrResult.totalClients.toLocaleString()} clients
+                      </p>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr style={{ background: C.bg }}>
+                            {["#", "Ad Name", "Sales", "Email", "Phone", "Share"].map((h, i) => (
+                              <th key={h} style={{
+                                padding: "10px 16px", fontSize: 11, fontWeight: 600, letterSpacing: "0.06em",
+                                textTransform: "uppercase", color: C.textMuted, textAlign: i <= 1 ? "left" : "right",
+                                borderBottom: `1px solid ${C.border}`,
+                              }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {attrResult.results.map((row, idx) => {
+                            const pct = totalSales > 0 ? (row.sales / totalSales * 100) : 0;
+                            return (
+                              <tr key={row.adName} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                <td style={{ padding: "12px 16px", fontSize: 12, color: C.textMuted, width: 36 }}>{idx + 1}</td>
+                                <td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 600, color: C.text, maxWidth: 320 }}>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                    <span>{row.adName}</span>
+                                    {/* Bar */}
+                                    <div style={{ height: 3, borderRadius: 2, background: C.border, width: "100%", maxWidth: 200 }}>
+                                      <div style={{ height: 3, borderRadius: 2, background: C.green, width: `${pct}%` }} />
+                                    </div>
+                                  </div>
+                                </td>
+                                <td style={{ padding: "12px 16px", fontSize: 14, fontWeight: 700, color: C.text, textAlign: "right" }}>{row.sales}</td>
+                                <td style={{ padding: "12px 16px", fontSize: 12, color: C.blue, textAlign: "right" }}>
+                                  {row.emailMatches > 0 ? row.emailMatches : <span style={{ color: C.textMuted }}>—</span>}
+                                </td>
+                                <td style={{ padding: "12px 16px", fontSize: 12, color: C.purple, textAlign: "right" }}>
+                                  {row.phoneMatches > 0 ? row.phoneMatches : <span style={{ color: C.textMuted }}>—</span>}
+                                </td>
+                                <td style={{ padding: "12px 16px", fontSize: 12, fontWeight: 600, color: C.textSec, textAlign: "right" }}>
+                                  {pct.toFixed(1)}%
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {attrResult.results.length === 0 && (
+                            <tr>
+                              <td colSpan={6} style={{ padding: "32px 20px", textAlign: "center", fontSize: 13, color: C.textMuted }}>
+                                No matches found — check that both files have Email or Phone columns in common
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })()}
 
         {/* Footer */}
         <footer style={{ textAlign: "center", fontSize: 11, color: C.textMuted, paddingBottom: 8 }}>
