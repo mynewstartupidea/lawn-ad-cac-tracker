@@ -1901,22 +1901,116 @@ export default function Home() {
             setAttrError(null);
             setAttrResult(null);
             try {
-              const fd = new FormData();
-              fd.append("ghlFile",     attrGhlFile!);
-              fd.append("clientsFile", attrClientsFile!);
-              const res  = await fetch("/api/ad-attribution", { method: "POST", body: fd });
-              let data: AttrResponse;
-              try {
-                data = await res.json() as AttrResponse;
-              } catch {
-                const text = await res.text().catch(() => "");
-                setAttrError(`Server error (${res.status}): ${text.slice(0, 200) || "no response body"}`);
-                return;
+              // Process entirely in the browser — no API call, no body-size limit.
+              // Dynamic import so xlsx only loads when the user actually clicks Analyze.
+              const XLSX = await import("xlsx");
+
+              function parseXlsxBuf(buf: ArrayBuffer) {
+                const wb = XLSX.read(buf, { type: "array", cellDates: true });
+                let best = wb.Sheets[wb.SheetNames[0]], bestN = 0;
+                for (const name of wb.SheetNames) {
+                  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[name], { defval: "" });
+                  if (rows.length > bestN) { bestN = rows.length; best = wb.Sheets[name]; }
+                }
+                return XLSX.utils.sheet_to_json<Record<string, unknown>>(best, { defval: "" });
               }
-              if (!res.ok || data.error) { setAttrError(data.error ?? `Server error ${res.status}`); return; }
-              setAttrResult(data);
-            } catch (err) { setAttrError(`Request failed: ${err instanceof Error ? err.message : String(err)}`); }
-            finally  { setAttrLoading(false); }
+
+              function flexCol(row: Record<string, unknown>, ...cands: string[]): string {
+                for (const c of cands) {
+                  const n = c.toLowerCase().replace(/[\s_\-]/g, "");
+                  for (const k of Object.keys(row))
+                    if (k.toLowerCase().replace(/[\s_\-]/g, "") === n) return String(row[k] ?? "").trim();
+                }
+                return "";
+              }
+
+              function normPhone(raw: unknown): string {
+                const d = String(raw ?? "").replace(/\D/g, "");
+                if (d.length === 11 && d.startsWith("1")) return d.slice(1);
+                return d.length >= 10 ? d : "";
+              }
+
+              const normEmail = (raw: unknown) => String(raw ?? "").trim().toLowerCase();
+
+              const [ghlBuf, clientsBuf] = await Promise.all([
+                attrGhlFile!.arrayBuffer(),
+                attrClientsFile!.arrayBuffer(),
+              ]);
+
+              const ghlRows    = parseXlsxBuf(ghlBuf);
+              const clientRows = parseXlsxBuf(clientsBuf);
+
+              if (ghlRows.length    === 0) { setAttrError("GHL leads file appears empty or unreadable"); return; }
+              if (clientRows.length === 0) { setAttrError("Clients file appears empty or unreadable"); return; }
+
+              // Build GHL lookup maps: email/phone → ad name (first lead per key wins)
+              const emailToAd = new Map<string, string>();
+              const phoneToAd = new Map<string, string>();
+              let validLeads  = 0;
+
+              for (const row of ghlRows) {
+                const email  = normEmail(flexCol(row, "Email", "Email Address", "Contact Email", "EmailAddress", "email_address"));
+                const phone  = normPhone(flexCol(row, "Phone", "Phone Number", "Mobile", "Mobile Phone", "Cell", "phone_number"));
+                const adName = (
+                  flexCol(row, "Ad Name", "AdName", "ad_name") ||
+                  flexCol(row, "UTM Content", "utm_content", "UTMContent") ||
+                  flexCol(row, "Source", "Lead Source", "LeadSource") ||
+                  flexCol(row, "Campaign", "Campaign Name") ||
+                  "Unknown"
+                ).trim() || "Unknown";
+
+                if (!email && !phone) continue;
+                validLeads++;
+                if (email && !emailToAd.has(email)) emailToAd.set(email, adName);
+                if (phone && !phoneToAd.has(phone)) phoneToAd.set(phone, adName);
+              }
+
+              // Match each client to an ad
+              const adSales = new Map<string, { emailMatches: number; phoneMatches: number; seen: Set<string> }>();
+              let emailMatchCount = 0, phoneMatchCount = 0, unmatched = 0;
+
+              for (const row of clientRows) {
+                const email  = normEmail(flexCol(row, "Email", "Email Address", "Customer Email", "EmailAddress", "email_address"));
+                const phones = [
+                  flexCol(row, "Phone", "Phone Number", "phone_number"),
+                  flexCol(row, "Mobile", "Mobile Phone", "Cell Phone", "Cell"),
+                  flexCol(row, "Home Phone", "Home"),
+                  flexCol(row, "Work Phone", "Work"),
+                ].map(normPhone).filter(p => p.length >= 10);
+
+                const clientId = email || phones[0] || "";
+                if (!clientId) { unmatched++; continue; }
+
+                let matchedAd: string | null = null;
+                let matchType: "email" | "phone" | null = null;
+
+                if (email && emailToAd.has(email)) { matchedAd = emailToAd.get(email)!; matchType = "email"; }
+                if (!matchedAd) {
+                  for (const phone of phones) {
+                    if (phoneToAd.has(phone)) { matchedAd = phoneToAd.get(phone)!; matchType = "phone"; break; }
+                  }
+                }
+
+                if (!matchedAd) { unmatched++; continue; }
+
+                if (!adSales.has(matchedAd)) adSales.set(matchedAd, { emailMatches: 0, phoneMatches: 0, seen: new Set() });
+                const entry = adSales.get(matchedAd)!;
+                if (entry.seen.has(clientId)) continue;
+                entry.seen.add(clientId);
+                if (matchType === "email") { entry.emailMatches++; emailMatchCount++; }
+                else                       { entry.phoneMatches++; phoneMatchCount++; }
+              }
+
+              const results: AttrAdResult[] = Array.from(adSales.entries())
+                .map(([adName, d]) => ({ adName, sales: d.emailMatches + d.phoneMatches, emailMatches: d.emailMatches, phoneMatches: d.phoneMatches }))
+                .sort((a, b) => b.sales - a.sales);
+
+              setAttrResult({ results, totalLeads: validLeads, totalClients: clientRows.length, totalSales: emailMatchCount + phoneMatchCount, emailMatchCount, phoneMatchCount, unmatched });
+            } catch (err) {
+              setAttrError(`Failed to process files: ${err instanceof Error ? err.message : String(err)}`);
+            } finally {
+              setAttrLoading(false);
+            }
           }
 
           const totalSales = attrResult?.totalSales ?? 0;
