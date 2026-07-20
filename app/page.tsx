@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
+import VideoEditorTab from "./components/VideoEditorTab";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ type LeadFilter = "all" | "open" | "sold";
 type DateRange  = "today" | "7d" | "14d" | "30d" | "all";
 type SortCol    = "adName" | "spend" | "leads" | "sales" | "conv" | "cac";
 type SortDir    = "asc" | "desc";
-type Tab        = "cac" | "eddm" | "drive" | "attribution";
+type Tab        = "cac" | "eddm" | "drive" | "attribution" | "editor";
 
 interface DriveFile {
   id: string;
@@ -72,7 +73,7 @@ const DATE_RANGE_LABELS: Record<DateRange, string> = {
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 
-const C = {
+export const C = {
   bg:          "#f8fafc",
   card:        "#ffffff",
   border:      "#e2e8f0",
@@ -807,6 +808,7 @@ export default function Home() {
               { key: "eddm", label: "📮 EDDM CAC" },
               { key: "drive", label: "Ad Status" },
               { key: "attribution", label: "Ad Attribution" },
+              { key: "editor", label: "🎬 AI Video Editor" },
             ] as { key: Tab; label: string }[]).map(t => (
               <button key={t.key} onClick={() => {
                 setTab(t.key);
@@ -2173,6 +2175,11 @@ export default function Home() {
             </>
           );
         })()}
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* AI VIDEO EDITOR TAB                                               */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {tab === "editor" && <VideoEditorTab C={C} />}
 
         {/* Footer */}
         <footer style={{ textAlign: "center", fontSize: 11, color: C.textMuted, paddingBottom: 8 }}>
