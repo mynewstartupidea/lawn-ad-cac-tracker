@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { supabase } from "../../lib/supabase";
+import { isFbSource, sendLeadEvent } from "../../lib/metaCapi";
 
 // Checks whether a value is a real non-empty string.
 // Filters out:
@@ -163,7 +165,6 @@ export async function POST(req: Request) {
       .maybeSingle() as { data: { id: string; source: string } | null };
 
     // FB source is authoritative; ghl = incomplete first-fire from GHL
-    const isFbSource  = (s: string) => ["FBFL","FBGA","FBMIAMI"].includes(s);
     const existingIsWeak = todayRecord && !isFbSource(todayRecord.source);
     const incomingIsBetter = isFbSource(source);
 
@@ -189,6 +190,28 @@ export async function POST(req: Request) {
       if (error) {
         console.error("[GHL] insert error:", error);
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
+    }
+
+    // Lead event only for Facebook-sourced leads on their first-ever submission.
+    // Sending Google/organic/EDDM leads lets Meta claim credit for conversions it didn't drive.
+    if (isFbSource(source)) {
+      const { data: earlier } = await supabase
+        .from("leads")
+        .select("id")
+        .eq("email", email)
+        .lt("created_at", twoHoursAgo.toISOString())
+        .limit(1)
+        .maybeSingle();
+      if (!earlier) {
+        const fbclid = attr?.fbclid ?? body.fbclid;
+        waitUntil(sendLeadEvent(source, {
+          email,
+          phone,
+          firstName,
+          zip:    postalCode,
+          fbclid: typeof fbclid === "string" ? fbclid : null,
+        }, ghlDate ? Math.floor(new Date(ghlDate).getTime() / 1000) : undefined));
       }
     }
 

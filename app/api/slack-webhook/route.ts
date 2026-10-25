@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { supabase } from "../../lib/supabase";
 import { extractSoldEmail } from "../../lib/extractSoldEmail";
+import { isFbSource, sendPurchaseEvent } from "../../lib/metaCapi";
 
 
 async function handleSoldMessage(text: string) {
@@ -13,16 +14,43 @@ async function handleSoldMessage(text: string) {
   // Upsert with ignoreDuplicates prevents the TOCTOU race where two simultaneous
   // Slack events (message + message_changed) both pass a select-then-insert check.
   // Requires UNIQUE constraint on sales.email (see sql/add_sales_email_unique.sql).
-  const { error } = await supabase
+  const { data: inserted, error } = await supabase
     .from("sales")
-    .upsert([{ email, status: "sold" }], { onConflict: "email", ignoreDuplicates: true });
+    .upsert([{ email, status: "sold" }], { onConflict: "email", ignoreDuplicates: true })
+    .select("id");
 
   if (error) {
     console.error("[Slack] insert error for", email, error);
     return;
   }
 
+  // With ignoreDuplicates, an already-recorded sale comes back empty — don't send Purchase twice
+  if (!inserted?.length) {
+    console.log("[Slack] sale already recorded:", email);
+    return;
+  }
+
   console.log("[Slack] sale recorded:", email);
+
+  const { data: lead } = await supabase
+    .from("leads")
+    .select("phone, first_name, postal_code, source")
+    .eq("email", email)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle() as { data: { phone?: string; first_name?: string; postal_code?: string; source?: string } | null };
+
+  if (!isFbSource(lead?.source)) {
+    console.log("[Slack] no Purchase event — lead source is", lead?.source ?? "unknown");
+    return;
+  }
+
+  await sendPurchaseEvent(lead.source, {
+    email,
+    phone:     lead.phone,
+    firstName: lead.first_name,
+    zip:       lead.postal_code,
+  });
 }
 
 export async function POST(req: Request) {
